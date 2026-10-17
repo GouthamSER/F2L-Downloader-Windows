@@ -7,7 +7,7 @@ Desktop port of the F2L Downloader Android app (v3.4.1). Same logic, native Wind
 <p align="center">
   <a href="https://ibb.co/s9P6MZ17"><img src="https://i.ibb.co/4RfY5HSk/f2lpc1.png" alt="F2L Downloader for Windows — downloads list" width="48%"></a>
   <a href="https://ibb.co/SDw1WX1v"><img src="https://i.ibb.co/rK2LTGLy/f2lpc2.png" alt="F2L Downloader for Windows — details view" width="48%"></a>
-  
+  <a href="https://ibb.co/wZqVSd5j"><img src="https://i.ibb.co/dsvFPf8x/f2lpc3.png" alt="f2lpc3" border="0" width="48%"></a>
 </p>
 
 ## Features
