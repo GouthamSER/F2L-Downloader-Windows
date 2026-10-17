@@ -1,0 +1,26 @@
+{
+  "name": "f2l-downloader-desktop",
+  "productName": "F2L Downloader",
+  "version": "3.4.1",
+  "description": "F2L Downloader for Windows — multi-threaded segmented downloads, magnet links, batch import.",
+  "main": "main.js",
+  "author": "Goutham Josh",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/engine.test.js",
+    "dist": "electron-builder --win nsis portable --x64"
+  },
+  "build": {
+    "appId": "com.f2l.downloader.desktop",
+    "productName": "F2L Downloader",
+    "files": ["main.js", "preload.js", "engine.js", "renderer/**", "assets/**", "package.json"],
+    "win": { "icon": "assets/icon.ico", "target": ["nsis", "portable"] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false },
+    "artifactName": "F2L-Downloader-${version}-${target}.${ext}"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

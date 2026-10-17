@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F2L Downloader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="dark">
+<div class="glow g1"></div><div class="glow g2"></div>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><img src="../assets/icon.png" alt=""><div><b>F2L</b><span>Downloader</span></div></div>
+    <button class="btn primary add" id="btnAdd">＋ Add download</button>
+    <nav id="nav">
+      <button data-tab="all" class="on">All <i id="c-all">0</i></button>
+      <button data-tab="active">Active <i id="c-active">0</i></button>
+      <button data-tab="completed">Completed <i id="c-completed">0</i></button>
+      <button data-tab="failed">Failed <i id="c-failed">0</i></button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+    <div class="side-foot">
+      <div class="totals"><span>Total speed</span><b id="totalSpeed">0 B/s</b></div>
+      <div class="ver" id="ver"></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section id="viewList">
+      <header class="bar">
+        <h1 id="title">All downloads</h1>
+        <div class="bar-actions">
+          <button class="btn" id="btnPauseAll">Pause all</button>
+          <button class="btn" id="btnResumeAll">Resume all</button>
+          <button class="btn" id="btnClear">Clear completed</button>
+        </div>
+      </header>
+      <div id="list" class="list"></div>
+      <div id="empty" class="empty" hidden>
+        <img src="../assets/icon.png" alt="">
+        <h2>Nothing here yet</h2>
+        <p>Click <b>Add download</b>, or press <kbd>Ctrl</kbd>+<kbd>V</kbd> with links on your clipboard.</p>
+      </div>
+    </section>
+
+    <section id="viewSettings" hidden>
+      <header class="bar"><h1>Settings</h1></header>
+      <div class="panel settings">
+        <label class="row"><span>Download folder<small id="folderPath"></small></span><span class="inline"><button class="btn" id="btnFolder">Change…</button><button class="btn" id="btnOpenFolder">Open</button></span></label>
+        <label class="row"><span>Default connections<small>Segments per file (1–16). More is faster on servers that allow it.</small></span><span class="inline"><input type="range" min="1" max="16" id="setConn"><b id="setConnV">8</b></span></label>
+        <label class="row"><span>Simultaneous downloads<small>Extra downloads wait in the queue.</small></span><input type="number" min="1" max="10" id="setMax" class="num"></label>
+        <label class="row"><span>Retry attempts<small>Automatic retries when the connection drops.</small></span><input type="number" min="0" max="10" id="setRetry" class="num"></label>
+        <label class="row"><span>Resume unfinished downloads on launch</span><input type="checkbox" id="setAuto" class="sw"></label>
+        <label class="row"><span>Desktop notifications</span><input type="checkbox" id="setNotif" class="sw"></label>
+        <label class="row"><span>Light theme</span><input type="checkbox" id="setTheme" class="sw"></label>
+        <label class="row"><span>Check for updates on startup</span><input type="checkbox" id="setUpd" class="sw"></label>
+        <div class="row"><span>Updates<small id="updMsg">Reads GitHub Releases.</small></span><button class="btn" id="btnUpdate">Check now</button></div>
+        <div class="row about"><span>F2L Downloader for Windows<small>Developed by Goutham Josh · github.com/GouthamSER</small></span></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- add dialog -->
+<dialog id="dlgAdd">
+  <form method="dialog" id="formAdd">
+    <h2>Add download</h2>
+    <textarea id="addUrls" rows="6" placeholder="Paste one or more links — http(s) or magnet:, one per line"></textarea>
+    <div class="quick">
+      <button type="button" class="btn sm" id="btnPaste">Paste from clipboard</button>
+      <button type="button" class="btn sm" id="btnImport">Import .txt / .m3u…</button>
+      <span id="addCount" class="muted"></span>
+    </div>
+    <div class="grid2">
+      <label>File name <small>(single link only, optional)</small><input id="addName" placeholder="auto-detect"></label>
+      <label>Connections <b id="addConnV">8</b><input type="range" min="1" max="16" id="addConn"></label>
+    </div>
+    <label>Save to<span class="inline"><input id="addFolder" readonly><button type="button" class="btn sm" id="btnAddFolder">Browse…</button></span></label>
+    <details>
+      <summary>Advanced HTTP options</summary>
+      <label>User-Agent
+        <select id="addUA">
+          <option value="">Default (F2L)</option>
+          <option value="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36">Chrome Android</option>
+          <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36">Chrome Windows PC</option>
+          <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0">Firefox</option>
+          <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15">Safari</option>
+          <option value="__custom">Custom…</option>
+        </select>
+      </label>
+      <input id="addUACustom" placeholder="Custom User-Agent" hidden>
+      <label>Referer<input id="addRef" placeholder="https://example.com/page"></label>
+      <label>Custom headers / cookies <small>(one per line)</small><textarea id="addHdr" rows="3" placeholder="Cookie: session=abc123&#10;Authorization: Bearer …"></textarea></label>
+    </details>
+    <div class="actions">
+      <label class="chk"><input type="checkbox" id="addStart" checked> Start now</label>
+      <span class="grow"></span>
+      <button type="button" class="btn" id="btnAddCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="btnAddOk" value="ok">Add</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- detail dialog -->
+<dialog id="dlgDetail"><div id="detail"></div></dialog>
+<!-- delete confirm -->
+<dialog id="dlgDel">
+  <h2>Remove download</h2>
+  <p id="delText"></p>
+  <div class="actions"><button class="btn" id="delCancel">Cancel</button><span class="grow"></span><button class="btn" id="delList">Remove from list</button><button class="btn danger" id="delFile">Delete file too</button></div>
+</dialog>
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
