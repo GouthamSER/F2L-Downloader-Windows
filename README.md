@@ -2,6 +2,16 @@
 
 Desktop port of the F2L Downloader Android app (v3.4.1). Same logic, native Windows `.exe`.
 
+## Screenshots
+
+<p align="center">
+  <a href="https://ibb.co/s9P6MZ17"><img src="https://i.ibb.co/4RfY5HSk/f2lpc1.png" alt="F2L Downloader for Windows — downloads list" width="48%"></a>
+  <a href="https://ibb.co/SDw1WX1v"><img src="https://i.ibb.co/rK2LTGLy/f2lpc2.png" alt="F2L Downloader for Windows — details view" width="48%"></a>
+  
+</p>
+
+## Features
+
 - Multi-threaded segmented downloads (1–16 connections) over HTTP Range, auto fallback to a single connection
 - Pause / resume (progress survives app restarts), auto-retry with back-off, stall detection (30 s)
 - Batch import: paste many links, clipboard, `.txt` / `.m3u`, drag & drop
