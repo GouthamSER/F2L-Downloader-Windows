@@ -238,6 +238,20 @@ async function checkUpdate() {
   } catch (e) { return { state: 'error', message: engine.friendly(e) }; }
 }
 
+async function checkWritable(dir) {
+  try {
+    await engine.ensureDir(dir);
+    const t = path.join(dir, `.f2l-write-test-${process.pid}`);
+    await fsp.writeFile(t, '');
+    await fsp.rm(t, { force: true });
+    return null;
+  } catch (e) {
+    if (e.code === 'EACCES' || e.code === 'EPERM') return `No write permission for "${dir}". Pick another folder (e.g. Downloads or Documents) — protected/system folders and Controlled Folder Access block writes.`;
+    if (e.code === 'ENOENT') return `Folder not found: "${dir}"`;
+    return `Cannot use "${dir}": ${e.code || e.message}`;
+  }
+}
+
 function handle(ch, fn) { ipcMain.handle(ch, async (_e, ...a) => fn(...a)); }
 
 function registerIpc() {
@@ -245,6 +259,9 @@ function registerIpc() {
   handle('add', async (o) => {
     const urls = [...new Set((o.urls || []).map(u => u.trim()).filter(Boolean))];
     const single = urls.length === 1;
+    const folder = o.folder || settings.folder;
+    const bad = await checkWritable(folder);
+    if (bad) return [{ skipped: 'folder', error: bad }];
     const out = [];
     for (const u of urls) out.push(await addOne(u, { ...o, fileName: single ? o.fileName : null }));
     return out;
@@ -269,8 +286,15 @@ function registerIpc() {
     settings = { ...settings, ...clean }; saveSoon(); pump(); return settings;
   });
   handle('pickFolder', async () => {
-    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], defaultPath: settings.folder });
-    return r.canceled ? null : r.filePaths[0];
+    try {
+      const opts = { properties: ['openDirectory', 'createDirectory'] };
+      if (settings.folder && fs.existsSync(settings.folder)) opts.defaultPath = settings.folder;
+      const r = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts));
+      if (r.canceled || !r.filePaths || !r.filePaths[0]) return { path: null };
+      const p = r.filePaths[0];
+      const err = await checkWritable(p);
+      return err ? { path: null, error: err } : { path: p };
+    } catch (e) { return { path: null, error: `Could not open folder picker: ${e.message}` }; }
   });
   handle('importFile', async () => {
     const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Link lists', extensions: ['txt', 'm3u', 'm3u8', 'list', 'csv'] }, { name: 'All files', extensions: ['*'] }] });

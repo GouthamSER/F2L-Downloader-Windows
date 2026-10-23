@@ -191,7 +191,11 @@ $('#btnImport').onclick = async () => {
   const u = await window.f2l.importFile(); if (!u.length) return;
   const cur = $('#addUrls').value.trim(); $('#addUrls').value = (cur ? cur + '\n' : '') + u.join('\n'); urlCount();
 };
-$('#btnAddFolder').onclick = async () => { const f = await window.f2l.pickFolder(); if (f) $('#addFolder').value = f; };
+$('#btnAddFolder').onclick = async () => {
+  const r = await window.f2l.pickFolder();
+  if (r && r.error) return toast(r.error);
+  if (r && r.path) $('#addFolder').value = r.path;
+};
 $('#btnAddCancel').onclick = () => $('#dlgAdd').close();
 $('#formAdd').addEventListener('submit', async e => {
   e.preventDefault();
@@ -204,6 +208,7 @@ $('#formAdd').addEventListener('submit', async e => {
     urls, fileName: $('#addName').value, connections: +$('#addConn').value, folder: $('#addFolder').value,
     autoStart: $('#addStart').checked, userAgent: ua, referer: $('#addRef').value, customHeaders: $('#addHdr').value
   });
+  if (res[0] && res[0].skipped === 'folder') return toast(res[0].error);
   const added = res.filter(r => r.added).length, skipped = res.length - added;
   toast(added ? `Added ${added} download${added > 1 ? 's' : ''}${skipped ? ` (${skipped} skipped: duplicate/exists)` : ''}` : 'Nothing added — duplicate, already downloaded or invalid link');
 });
@@ -235,7 +240,11 @@ function fillSettings() {
   applyTheme();
 }
 async function save(patch) { settings = await window.f2l.setSettings(patch); fillSettings(); }
-$('#btnFolder').onclick = async () => { const f = await window.f2l.pickFolder(); if (f) save({ folder: f }); };
+$('#btnFolder').onclick = async () => {
+  const r = await window.f2l.pickFolder();
+  if (r && r.error) return toast(r.error);
+  if (r && r.path) save({ folder: r.path });
+};
 $('#btnOpenFolder').onclick = () => window.f2l.openFolder();
 $('#setConn').oninput = e => { $('#setConnV').textContent = e.target.value; };
 $('#setConn').onchange = e => save({ connections: +e.target.value });

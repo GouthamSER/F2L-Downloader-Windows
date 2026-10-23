@@ -223,8 +223,15 @@ async function streamBody(url, headers, signal, onData, expectStatus) {
   } finally { clearTimeout(timer); }
 }
 
+// mkdir on an existing drive root (e.g. F:\) throws EPERM on Windows — only create when missing
+async function ensureDir(dir) {
+  const st = await fsp.stat(dir).catch(() => null);
+  if (st && st.isDirectory()) return;
+  await fsp.mkdir(dir, { recursive: true });
+}
+
 async function download(item, { signal, onProgress }) {
-  await fsp.mkdir(item.folder, { recursive: true });
+  await ensureDir(item.folder);
   const finalPath = path.join(item.folder, item.fileName);
   const partPath = finalPath + '.f2l.part';
 
@@ -391,7 +398,7 @@ async function downloadMagnet(item, finalPath, onProgress, signal) {
 }
 
 module.exports = {
-  isMagnet, parseMagnetUri, httpErrorMessage, friendly, isRetryable, extractUrls, sanitizeName,
+  ensureDir, isMagnet, parseMagnetUri, httpErrorMessage, friendly, isRetryable, extractUrls, sanitizeName,
   guessNameFromUrl, resolveFileName, probe, download, buildHeaders, parseContentDisposition,
   HttpError, RangeRefusedError
 };
