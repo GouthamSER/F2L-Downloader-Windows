@@ -110,7 +110,7 @@ function renderDetail() {
       <dt>Speed</dt><dd>${i.status === 'DOWNLOADING' ? fmtSpeed(i.speed) : '—'}</dd>
       <dt>Progress</dt><dd>${fmtBytes(i.downloadedBytes)} / ${fmtBytes(i.totalBytes)} (${pct(i).toFixed(1)}%)</dd>
       <dt>ETA</dt><dd>${i.status === 'DOWNLOADING' ? fmtEta(i.eta) : '—'}</dd>
-      <dt>Connections</dt><dd>${i.isTorrent ? '—' : (i.singleOnly ? '1 (server has no range support)' : i.connections)}</dd>
+      <dt>${i.bt ? 'Peers' : 'Connections'}</dt><dd>${i.bt ? i.connections : i.isTorrent ? '—' : (i.singleOnly ? '1 (server has no range support)' : i.connections)}</dd>
       <dt>Saved to</dt><dd>${esc(i.folder)}</dd>
       <dt>URL</dt><dd>${esc(i.url)}</dd>
       ${i.magnetHash ? `<dt>Info hash</dt><dd>${esc(i.magnetHash)}</dd>` : ''}
@@ -254,7 +254,7 @@ function fillSettings() {
   $('#setConn').value = settings.connections; $('#setConnV').textContent = settings.connections;
   $('#setMax').value = settings.maxConcurrent; $('#setRetry').value = settings.retryAttempts;
   $('#setAuto').checked = settings.autoResume; $('#setNotif').checked = settings.notifications;
-  $('#setQb').checked = !!settings.qbitEnabled; $('#qbBox').hidden = !settings.qbitEnabled;
+  $('#setBt').checked = settings.btEnabled !== false; $('#setQb').checked = !!settings.qbitEnabled; $('#qbBox').hidden = !settings.qbitEnabled;
   for (const [id, k] of [['#setQbUrl', 'qbitUrl'], ['#setQbUser', 'qbitUser'], ['#setQbPass', 'qbitPass']]) if (document.activeElement !== $(id)) $(id).value = settings[k] || '';
   $('#setTheme').checked = settings.theme === 'light'; $('#setUpd').checked = settings.autoUpdateCheck;
   applyTheme();
@@ -270,6 +270,7 @@ $('#setConn').oninput = e => { $('#setConnV').textContent = e.target.value; };
 $('#setConn').onchange = e => save({ connections: +e.target.value });
 $('#setMax').onchange = e => save({ maxConcurrent: +e.target.value });
 $('#setRetry').onchange = e => save({ retryAttempts: +e.target.value });
+$('#setBt').onchange = e => save({ btEnabled: e.target.checked });
 $('#setQb').onchange = e => save({ qbitEnabled: e.target.checked });
 $('#setQbUrl').onchange = e => save({ qbitUrl: e.target.value });
 $('#setQbUser').onchange = e => save({ qbitUser: e.target.value });
