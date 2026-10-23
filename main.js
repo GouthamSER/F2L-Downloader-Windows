@@ -7,7 +7,7 @@ const engine = require('./engine');
 const qbit = require('./qbit');
 
 const VERSION = require('./package.json').version;
-const REPO = 'GouthamSER/F2L-Downloader-App';
+const REPO = 'GouthamSER/F2L-Downloader-Windows';
 
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
