@@ -55,6 +55,13 @@
         <label class="row"><span>Desktop notifications</span><input type="checkbox" id="setNotif" class="sw"></label>
         <label class="row"><span>Light theme</span><input type="checkbox" id="setTheme" class="sw"></label>
         <label class="row"><span>Check for updates on startup</span><input type="checkbox" id="setUpd" class="sw"></label>
+        <label class="row"><span>Send magnets &amp; .torrent files to qBittorrent<small>Uses qBittorrent Web UI (Tools → Options → Web UI). Off = magnets save a cache .torrent / .magnet shortcut.</small></span><input type="checkbox" id="setQb" class="sw"></label>
+        <div id="qbBox" hidden>
+          <label class="row"><span>Web UI address<small>Usually http://127.0.0.1:8080</small></span><input id="setQbUrl" class="txt" placeholder="http://127.0.0.1:8080"></label>
+          <label class="row"><span>Username</span><input id="setQbUser" class="txt" autocomplete="off"></label>
+          <label class="row"><span>Password</span><input id="setQbPass" class="txt" type="password" autocomplete="off"></label>
+          <div class="row"><span>Connection<small id="qbMsg">Not tested.</small></span><button type="button" class="btn" id="btnQbTest">Test</button></div>
+        </div>
         <div class="row"><span>Updates<small id="updMsg">Reads GitHub Releases.</small></span><button class="btn" id="btnUpdate">Check now</button></div>
         <div class="row about"><span>F2L Downloader for Windows<small>Developed by Goutham Josh · github.com/GouthamSER</small></span></div>
       </div>
@@ -70,6 +77,7 @@
     <div class="quick">
       <button type="button" class="btn sm" id="btnPaste">Paste from clipboard</button>
       <button type="button" class="btn sm" id="btnImport">Import .txt / .m3u…</button>
+      <button type="button" class="btn sm" id="btnTorrent">Add .torrent…</button>
       <span id="addCount" class="muted"></span>
     </div>
     <div class="grid2">

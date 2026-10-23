@@ -1,14 +1,14 @@
 {
   "name": "f2l-downloader-desktop",
   "productName": "F2L Downloader",
-  "version": "3.4.1",
-  "description": "F2L Downloader for Windows \u2014 multi-threaded segmented downloads, magnet links, batch import.",
+  "version": "3.5.0",
+  "description": "F2L Downloader for Windows \u2014 multi-threaded segmented downloads, magnet links, qBittorrent hand-off, batch import.",
   "main": "main.js",
   "author": "Goutham Josh",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test/engine.test.js",
+    "test": "node test/engine.test.js && node test/qbit.test.js",
     "dist": "electron-builder --win nsis portable --x64 --publish never"
   },
   "build": {
@@ -18,6 +18,7 @@
       "main.js",
       "preload.js",
       "engine.js",
+      "qbit.js",
       "renderer/**",
       "assets/**",
       "package.json"

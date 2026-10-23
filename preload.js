@@ -6,6 +6,6 @@ contextBridge.exposeInMainWorld('f2l', {
   remove: call('remove'), pauseAll: call('pauseAll'), resumeAll: call('resumeAll'), clearCompleted: call('clearCompleted'),
   open: call('open'), reveal: call('reveal'), openFolder: call('openFolder'), fileExists: call('fileExists'),
   setSettings: call('setSettings'), pickFolder: call('pickFolder'), importFile: call('importFile'),
-  clipboard: call('clipboard'), checkUpdate: call('checkUpdate'), openExternal: call('openExternal'),
+  clipboard: call('clipboard'), addTorrents: call('addTorrents'), pickTorrents: call('pickTorrents'), qbitTest: call('qbitTest'), checkUpdate: call('checkUpdate'), openExternal: call('openExternal'),
   onItems: (cb) => ipcRenderer.on('items', (_e, items) => cb(items))
 });

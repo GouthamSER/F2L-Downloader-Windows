@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
 const engine = require('./engine');
+const qbit = require('./qbit');
 
 const VERSION = require('./package.json').version;
 const REPO = 'GouthamSER/F2L-Downloader-App';
@@ -14,6 +15,7 @@ let win = null;
 let items = [];
 let settings = {};
 const runners = new Map(); // id -> { ac, done }
+const qb = qbit.createClient(() => settings);
 
 const DEFAULT_SETTINGS = () => ({
   folder: app.getPath('downloads'),
@@ -23,7 +25,11 @@ const DEFAULT_SETTINGS = () => ({
   autoResume: true,
   notifications: true,
   theme: 'dark',
-  autoUpdateCheck: true
+  autoUpdateCheck: true,
+  qbitEnabled: false,
+  qbitUrl: 'http://127.0.0.1:8080',
+  qbitUser: 'admin',
+  qbitPass: ''
 });
 
 // ---------- persistence ----------
@@ -66,7 +72,7 @@ function notify(title, body) {
 
 // ---------- queue ----------
 function pump() {
-  const running = items.filter(i => i.status === 'DOWNLOADING').length;
+  const running = items.filter(i => i.status === 'DOWNLOADING' && !i.qbit).length;
   let slots = Math.max(1, settings.maxConcurrent) - running;
   for (const it of [...items].reverse()) { // oldest first
     if (slots <= 0) break;
@@ -142,11 +148,127 @@ async function uniqueName(folder, base, url, ignoreId) {
   return n;
 }
 
+
+// ---------- qBittorrent ----------
+const qbitErr = e => (e && e.qbit) ? e.message : engine.friendly(e);
+
+async function qbitSend(item, send) {
+  try {
+    await send();
+    item.qbitAdded = true; item.qbitAddedAt = Date.now(); item.error = null;
+    item.status = 'DOWNLOADING'; item.speed = -1;
+  } catch (e) {
+    item.status = 'FAILED'; item.speed = 0; item.eta = -1; item.error = qbitErr(e);
+    notify('qBittorrent error', item.error);
+  }
+  push();
+}
+
+function qbitItem(id, url, folder, fileName, hash, size, o) {
+  return {
+    id, url, folder, fileName,
+    totalBytes: size > 0 ? size : -1, downloadedBytes: 0,
+    status: o.autoStart === false ? 'PAUSED' : 'DOWNLOADING',
+    speed: o.autoStart === false ? 0 : -1, eta: -1, error: null,
+    connections: 1, userAgent: null, referer: null, customHeaders: null,
+    isTorrent: true, qbit: true, qbitAdded: false, magnetHash: hash,
+    speedHistory: [], addedAt: Date.now(), segs: null
+  };
+}
+
+function dupCheck(url) {
+  const ex = items.find(i => i.url.toLowerCase() === url.toLowerCase());
+  if (!ex) return null;
+  if (ex.status === 'DOWNLOADING' || ex.status === 'QUEUED') return { skipped: 'duplicate' };
+  if (ex.status === 'PAUSED' || ex.status === 'FAILED') { startItem(ex.id); return { skipped: 'resumed' }; }
+  return null;
+}
+
+async function addMagnetQbit(clean, o, folder) {
+  const info = engine.parseMagnetUri(clean);
+  if (!info) return { skipped: 'invalid' };
+  if (!o.force) { const d = dupCheck(clean); if (d) return d; }
+  const id = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  const name = engine.sanitizeName(info.displayName || `magnet-${info.infoHash.slice(0, 8)}`);
+  const item = qbitItem(id, clean, folder, name, info.infoHash, -1, o);
+  items.unshift(item); push();
+  if (o.autoStart !== false) await qbitSend(item, () => qb.addMagnet(clean, folder));
+  return { added: id };
+}
+
+// data: Buffer of a .torrent file
+async function addTorrentData(fileName, data, o = {}) {
+  let meta;
+  try { meta = qbit.parseTorrent(data); } catch (e) { return { skipped: 'invalid', error: `${fileName}: ${e.message}` }; }
+  const folder = o.folder || settings.folder;
+  const url = 'torrent://' + meta.infoHash.toLowerCase();
+  if (!o.force) { const d = dupCheck(url); if (d) return d; }
+  const id = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  const name = engine.sanitizeName(meta.name);
+  const item = qbitItem(id, url, folder, name, meta.infoHash, meta.size, o);
+  if (!settings.qbitEnabled) {
+    // no WebUI configured: save the .torrent and hand it to the default torrent app (usually qBittorrent)
+    const bad = await checkWritable(folder);
+    if (bad) return { skipped: 'folder', error: bad };
+    const tname = await uniqueName(folder, engine.sanitizeName(/\.torrent$/i.test(fileName) ? fileName : fileName + '.torrent'), url, id);
+    const tpath = path.join(folder, tname);
+    await fsp.writeFile(tpath, data);
+    const err = await shell.openPath(tpath);
+    Object.assign(item, { qbit: false, fileName: tname, status: err ? 'FAILED' : 'COMPLETED', totalBytes: data.length, downloadedBytes: data.length, speed: 0, completedAt: Date.now(),
+      error: err ? `No app opened the .torrent (${err}). Enable qBittorrent Web UI in Settings.` : null });
+    items.unshift(item); push();
+    return { added: id };
+  }
+  items.unshift(item); push();
+  if (o.autoStart !== false) await qbitSend(item, () => qb.addTorrentFile(fileName, data, folder));
+  qbitTorrentCache.set(id, { fileName, data });
+  return { added: id };
+}
+const qbitTorrentCache = new Map(); // id -> { fileName, data } so Retry can re-send a .torrent file this session
+
+let qbitPolling = false;
+async function pollQbit() {
+  if (qbitPolling || !settings.qbitEnabled) return;
+  const watch = items.filter(i => i.qbit && i.qbitAdded && i.status !== 'COMPLETED');
+  if (!watch.length) return;
+  qbitPolling = true;
+  try {
+    const list = await qb.info(watch.map(i => i.magnetHash));
+    const by = new Map(list.map(t => [String(t.hash).toLowerCase(), t]));
+    for (const it of watch) {
+      const t = by.get(String(it.magnetHash).toLowerCase());
+      if (!t) {
+        if (Date.now() - (it.qbitAddedAt || 0) > 15000 && it.status !== 'PAUSED') { it.status = 'FAILED'; it.speed = 0; it.eta = -1; it.error = 'Torrent is no longer in qBittorrent (removed there?). Click Retry to add again.'; it.qbitAdded = false; }
+        continue;
+      }
+      const prev = it.status;
+      it.status = qbit.mapState(t.state);
+      it.error = it.status === 'FAILED' ? `qBittorrent: ${t.state}` : null;
+      const size = t.size > 0 ? t.size : (t.total_size || -1);
+      if (size > 0) it.totalBytes = size;
+      it.downloadedBytes = typeof t.downloaded === 'number' && t.downloaded > 0 ? t.downloaded : Math.round((t.progress || 0) * (it.totalBytes > 0 ? it.totalBytes : 0));
+      it.speed = it.status === 'DOWNLOADING' ? (t.state === 'metaDL' ? -1 : t.dlspeed || 0) : 0;
+      it.eta = it.status === 'DOWNLOADING' && t.eta > 0 && t.eta < 8640000 ? t.eta : -1;
+      if (it.speed >= 0) it.speedHistory = [...(it.speedHistory || []), it.speed].slice(-60);
+      if (t.state !== 'metaDL' && t.name) it.fileName = engine.sanitizeName(t.name);
+      if (t.save_path) it.folder = t.save_path;
+      if (it.status === 'COMPLETED') { it.completedAt = Date.now(); if (it.totalBytes > 0) it.downloadedBytes = it.totalBytes; it.speed = 0; it.eta = -1; if (prev !== 'COMPLETED') notify('Download complete', it.fileName); }
+      if (it.status === 'FAILED' && prev !== 'FAILED') notify('Download failed', `${it.fileName}\n${it.error}`);
+    }
+    push();
+  } catch (e) {
+    const msg = qbitErr(e);
+    for (const it of watch) if (it.status === 'DOWNLOADING') it.error = msg;
+    push();
+  } finally { qbitPolling = false; }
+}
+
 async function addOne(url, o) {
   const clean = url.trim();
   const magnet = engine.isMagnet(clean);
   if (!magnet && !/^https?:\/\//i.test(clean)) return { skipped: 'invalid' };
   const folder = o.folder || settings.folder;
+  if (magnet && settings.qbitEnabled) return addMagnetQbit(clean, o, folder);
 
   if (!o.force) {
     const ex = items.find(i => i.url.toLowerCase() === clean.toLowerCase());
@@ -186,17 +308,31 @@ async function addOne(url, o) {
 
 function startItem(id) {
   const it = find(id); if (!it || runners.has(id) || it.status === 'COMPLETED') return;
+  if (it.qbit) {
+    it.status = 'DOWNLOADING'; it.speed = -1; it.error = null; push();
+    (async () => {
+      if (it.qbitAdded) { try { await qb.resume(it.magnetHash); } catch (e) { it.status = 'FAILED'; it.speed = 0; it.error = qbitErr(e); push(); } return; }
+      const cached = qbitTorrentCache.get(it.id);
+      if (cached) await qbitSend(it, () => qb.addTorrentFile(cached.fileName, cached.data, it.folder));
+      else if (engine.isMagnet(it.url)) await qbitSend(it, () => qb.addMagnet(it.url, it.folder));
+      else { it.status = 'FAILED'; it.speed = 0; it.error = 'Drop the .torrent file again to re-add it.'; push(); }
+    })();
+    return;
+  }
   it.status = 'QUEUED'; it.error = null; pump();
 }
 async function pauseItem(id) {
   const it = find(id); if (!it) return;
   if (it.status === 'COMPLETED') return;
   it.status = 'PAUSED'; it.speed = 0; it.eta = -1;
+  if (it.qbit) { if (it.qbitAdded) await qb.pause(it.magnetHash).catch(e => { it.error = qbitErr(e); }); push(); return; }
   await stop(id); pump();
 }
 async function removeItem(id, deleteFiles) {
   const it = find(id); if (!it) return;
   it.status = 'CANCELED';
+  if (it.qbit && it.qbitAdded) await qb.remove(it.magnetHash, deleteFiles).catch(() => {});
+  qbitTorrentCache.delete(id);
   await stop(id);
   items = items.filter(i => i.id !== id);
   const fp = path.join(it.folder, it.fileName);
@@ -260,7 +396,8 @@ function registerIpc() {
     const urls = [...new Set((o.urls || []).map(u => u.trim()).filter(Boolean))];
     const single = urls.length === 1;
     const folder = o.folder || settings.folder;
-    const bad = await checkWritable(folder);
+    const viaQbit = settings.qbitEnabled && urls.length && urls.every(u => engine.isMagnet(u));
+    const bad = viaQbit ? null : await checkWritable(folder);
     if (bad) return [{ skipped: 'folder', error: bad }];
     const out = [];
     for (const u of urls) out.push(await addOne(u, { ...o, fileName: single ? o.fileName : null }));
@@ -283,7 +420,8 @@ function registerIpc() {
     clean.connections = Math.min(Math.max(+clean.connections || settings.connections, 1), 16);
     clean.retryAttempts = Math.min(Math.max(+(clean.retryAttempts ?? settings.retryAttempts), 0), 10);
     clean.maxConcurrent = Math.min(Math.max(+(clean.maxConcurrent ?? settings.maxConcurrent), 1), 10);
-    settings = { ...settings, ...clean }; saveSoon(); pump(); return settings;
+    for (const k of ['qbitUrl', 'qbitUser', 'qbitPass']) if (k in clean) clean[k] = String(clean[k] || '').trim();
+    settings = { ...settings, ...clean }; qb.reset(); saveSoon(); pump(); return settings;
   });
   handle('pickFolder', async () => {
     try {
@@ -302,6 +440,27 @@ function registerIpc() {
     const text = await fsp.readFile(r.filePaths[0], 'utf8');
     return engine.extractUrls(text);
   });
+  handle('addTorrents', async (files, o) => {
+    const out = [];
+    for (const f of files || []) out.push(await addTorrentData(String(f.name || 'file.torrent'), Buffer.from(f.data), o || {}));
+    return out;
+  });
+  handle('pickTorrents', async (o) => {
+    const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Torrent files', extensions: ['torrent'] }] });
+    if (r.canceled) return [];
+    const out = [];
+    for (const fp of r.filePaths) out.push(await addTorrentData(path.basename(fp), await fsp.readFile(fp), o || {}));
+    return out;
+  });
+  handle('qbitTest', async (cfg) => {
+    const prev = settings;
+    try {
+      settings = { ...settings, ...cfg }; qb.reset();
+      const v = await qb.version();
+      return { ok: true, version: v };
+    } catch (e) { return { ok: false, error: qbitErr(e) }; }
+    finally { settings = prev; qb.reset(); }
+  });
   handle('clipboard', () => engine.extractUrls(clipboard.readText() || ''));
   handle('checkUpdate', () => checkUpdate());
   handle('openExternal', u => { if (/^https:\/\//i.test(u)) shell.openExternal(u); });
@@ -311,8 +470,14 @@ app.on('second-instance', (_e, argv) => {
   if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   const urls = engine.extractUrls(argv.join(' '));
   if (urls.length) addMany(urls);
+  addTorrentPaths(argv);
 });
 function addMany(urls) { (async () => { for (const u of urls) await addOne(u, {}); })(); }
+// .torrent paths passed on the command line (double-click / "open with")
+function addTorrentPaths(argv) {
+  const paths = argv.filter(a => /\.torrent$/i.test(a) && fs.existsSync(a));
+  (async () => { for (const p of paths) { try { await addTorrentData(path.basename(p), await fsp.readFile(p), {}); } catch { /* ignore */ } } })();
+}
 
 app.whenReady().then(() => {
   settings = { ...DEFAULT_SETTINGS(), ...readJson('settings.json', {}) };
@@ -320,13 +485,16 @@ app.whenReady().then(() => {
   // unfinished work at last shutdown: resume or park
   for (const it of items) {
     it.speed = 0; it.eta = -1;
+    if (it.qbit) continue; // qBittorrent owns these; the poller syncs state
     if (it.status === 'DOWNLOADING' || it.status === 'QUEUED') it.status = settings.autoResume ? 'QUEUED' : 'PAUSED';
   }
   registerIpc();
   createWindow();
   pump();
+  setInterval(pollQbit, 2000);
   const startUrls = engine.extractUrls(process.argv.slice(1).join(' '));
   if (startUrls.length) addMany(startUrls);
+  addTorrentPaths(process.argv.slice(1));
 });
 
 app.on('before-quit', () => { for (const r of runners.values()) r.ac.abort(); saveNow(); });

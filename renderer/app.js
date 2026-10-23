@@ -58,7 +58,7 @@ function renderList() {
     if (i.totalBytes > 0 && i.status !== 'COMPLETED') meta.push(`<span>${p.toFixed(1)}%</span>`);
     if (!i.isTorrent && i.status === 'DOWNLOADING') meta.push(`<span>${i.singleOnly ? 1 : i.connections} conn</span>`);
     return `<div class="card ${i.status}" data-id="${i.id}">
-      <div style="min-width:0"><div class="name"><span class="badge ${i.status}">${STATUS[i.status] || i.status}</span>${i.isTorrent ? '<span class="badge mag">magnet</span>' : ''}<span style="overflow:hidden;text-overflow:ellipsis">${esc(i.fileName)}</span></div>
+      <div style="min-width:0"><div class="name"><span class="badge ${i.status}">${STATUS[i.status] || i.status}</span>${i.isTorrent ? `<span class="badge mag">${i.qbit ? 'qBittorrent' : 'magnet'}</span>` : ''}<span style="overflow:hidden;text-overflow:ellipsis">${esc(i.fileName)}</span></div>
       <div class="meta">${meta.join('')}</div></div>
       <div class="acts">${i.status === 'DOWNLOADING' ? sparkSvg(i.speedHistory.slice(-30)) : ''}${actionsFor(i)}</div>
       <div class="prog ${ind ? 'ind' : ''}"><div style="width:${p}%"></div></div>
@@ -101,7 +101,7 @@ function renderDetail() {
   const segs = (i.segs || []).map(s => `<div title="${fmtBytes(s.d)} / ${fmtBytes(s.e - s.s + 1)}"><i style="width:${Math.min(100, s.d * 100 / (s.e - s.s + 1))}%"></i></div>`).join('');
   const root = $('#detail');
   const keep = root.querySelector('canvas');
-  root.innerHTML = `<div class="dh"><div style="min-width:0"><h2>${esc(i.fileName)}</h2><span class="badge ${i.status}">${STATUS[i.status]}</span> ${i.isTorrent ? '<span class="badge mag">magnet</span>' : ''}</div>
+  root.innerHTML = `<div class="dh"><div style="min-width:0"><h2>${esc(i.fileName)}</h2><span class="badge ${i.status}">${STATUS[i.status]}</span> ${i.isTorrent ? `<span class="badge mag">${i.qbit ? 'qBittorrent' : 'magnet'}</span>` : ''}</div>
     <div class="acts">${actionsFor(i)}<button class="ic" data-act="close" title="Close" aria-label="Close">✕</button></div></div>
     <div class="prog ${i.speed === -1 ? 'ind' : ''}" style="margin-top:12px"><div style="width:${pct(i)}%"></div></div>
     <canvas class="chart" id="chart"></canvas>
@@ -196,6 +196,16 @@ $('#btnAddFolder').onclick = async () => {
   if (r && r.error) return toast(r.error);
   if (r && r.path) $('#addFolder').value = r.path;
 };
+$('#btnTorrent').onclick = async () => {
+  const res = await window.f2l.pickTorrents({ folder: $('#addFolder').value, autoStart: $('#addStart').checked });
+  if (!res.length) return;
+  $('#dlgAdd').close(); torrentToast(res);
+};
+function torrentToast(res) {
+  const ok = res.filter(r => r.added).length, bad = res.find(r => r.error);
+  if (bad && !ok) return toast(bad.error);
+  toast(ok ? `Added ${ok} torrent${ok > 1 ? 's' : ''}${res.length > ok ? ` (${res.length - ok} skipped)` : ''}` : 'Torrent already in list');
+}
 $('#btnAddCancel').onclick = () => $('#dlgAdd').close();
 $('#formAdd').addEventListener('submit', async e => {
   e.preventDefault();
@@ -220,12 +230,20 @@ document.addEventListener('keydown', async e => {
   }
 });
 // Drag & drop links or text files
-document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dropzone'); });
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dropzone'); });
 document.addEventListener('drop', async e => {
   e.preventDefault();
+  document.body.classList.remove('dropzone');
+  const files = [...(e.dataTransfer.files || [])];
+  const tor = files.filter(f => /\.torrent$/i.test(f.name) && f.size < 20e6);
+  if (tor.length) {
+    const payload = await Promise.all(tor.map(async f => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
+    return torrentToast(await window.f2l.addTorrents(payload, {}));
+  }
   const t = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
   if (t) return openAdd(t);
-  const f = e.dataTransfer.files[0];
+  const f = files[0];
   if (f && f.size < 5e6) openAdd(await f.text());
 });
 
@@ -236,6 +254,8 @@ function fillSettings() {
   $('#setConn').value = settings.connections; $('#setConnV').textContent = settings.connections;
   $('#setMax').value = settings.maxConcurrent; $('#setRetry').value = settings.retryAttempts;
   $('#setAuto').checked = settings.autoResume; $('#setNotif').checked = settings.notifications;
+  $('#setQb').checked = !!settings.qbitEnabled; $('#qbBox').hidden = !settings.qbitEnabled;
+  for (const [id, k] of [['#setQbUrl', 'qbitUrl'], ['#setQbUser', 'qbitUser'], ['#setQbPass', 'qbitPass']]) if (document.activeElement !== $(id)) $(id).value = settings[k] || '';
   $('#setTheme').checked = settings.theme === 'light'; $('#setUpd').checked = settings.autoUpdateCheck;
   applyTheme();
 }
@@ -250,6 +270,15 @@ $('#setConn').oninput = e => { $('#setConnV').textContent = e.target.value; };
 $('#setConn').onchange = e => save({ connections: +e.target.value });
 $('#setMax').onchange = e => save({ maxConcurrent: +e.target.value });
 $('#setRetry').onchange = e => save({ retryAttempts: +e.target.value });
+$('#setQb').onchange = e => save({ qbitEnabled: e.target.checked });
+$('#setQbUrl').onchange = e => save({ qbitUrl: e.target.value });
+$('#setQbUser').onchange = e => save({ qbitUser: e.target.value });
+$('#setQbPass').onchange = e => save({ qbitPass: e.target.value });
+$('#btnQbTest').onclick = async () => {
+  $('#qbMsg').textContent = 'Testing…';
+  const r = await window.f2l.qbitTest({ qbitUrl: $('#setQbUrl').value, qbitUser: $('#setQbUser').value, qbitPass: $('#setQbPass').value });
+  $('#qbMsg').textContent = r.ok ? `Connected — qBittorrent ${r.version}` : r.error;
+};
 $('#setAuto').onchange = e => save({ autoResume: e.target.checked });
 $('#setNotif').onchange = e => save({ notifications: e.target.checked });
 $('#setTheme').onchange = e => save({ theme: e.target.checked ? 'light' : 'dark' });

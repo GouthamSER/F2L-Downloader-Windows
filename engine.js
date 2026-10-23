@@ -121,7 +121,7 @@ function parseContentDisposition(h) {
 }
 
 function buildHeaders(item) {
-  const h = { 'Accept-Encoding': 'identity', 'User-Agent': 'F2LDownloader/3.4.1' };
+  const h = { 'Accept-Encoding': 'identity', 'User-Agent': 'F2LDownloader/3.5.0' };
   if (item.userAgent && item.userAgent.trim()) h['User-Agent'] = item.userAgent.trim();
   if (item.referer && item.referer.trim()) h['Referer'] = item.referer.trim();
   if (item.customHeaders) {
@@ -371,7 +371,7 @@ async function downloadMagnet(item, finalPath, onProgress, signal) {
     for (const u of caches) {
       try {
         const ac = new AbortController(); linkSignal(signal, ac); const t = setTimeout(() => ac.abort(), 20000);
-        const r = await fetch(u, { headers: { 'User-Agent': 'F2LDownloader/3.4.1' }, signal: ac.signal, redirect: 'follow' });
+        const r = await fetch(u, { headers: { 'User-Agent': 'F2LDownloader/3.5.0' }, signal: ac.signal, redirect: 'follow' });
         if (r.ok) {
           const bytes = Buffer.from(await r.arrayBuffer()); clearTimeout(t);
           if (bytes.length > 50 && bytes[0] === 0x64) { // bencoded dict starts with 'd'

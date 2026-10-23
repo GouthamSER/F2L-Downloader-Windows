@@ -1,6 +1,6 @@
 # F2L Downloader — Windows
 
-Desktop port of the F2L Downloader Android app (v3.4.1). Same logic, native Windows `.exe`.
+Desktop port of the F2L Downloader Android app (v3.5.0). Same logic, native Windows `.exe`.
 
 ## Screenshots
 
@@ -15,6 +15,7 @@ Desktop port of the F2L Downloader Android app (v3.4.1). Same logic, native Wind
 - Multi-threaded segmented downloads (1–16 connections) over HTTP Range, auto fallback to a single connection
 - Pause / resume (progress survives app restarts), auto-retry with back-off, stall detection (30 s)
 - Batch import: paste many links, clipboard, `.txt` / `.m3u`, drag & drop
+- qBittorrent: magnets and `.torrent` files (drag & drop, file picker, double-click) go to qBittorrent via its Web UI API, with live progress, pause/resume/remove synced. Without Web UI, `.torrent` files open in your default torrent app
 - Magnet links: info-hash parsing (hex + base32), `.torrent` fetched from public caches, else a `.magnet` shortcut
 - Custom User-Agent presets, Referer, arbitrary headers / cookies
 - File name from `Content-Disposition`, Windows-safe names, duplicate-safe naming
