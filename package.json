@@ -24,6 +24,7 @@
       "assets/**",
       "package.json"
     ],
+    "npmRebuild": false,
     "asarUnpack": [
       "**/*.node"
     ],
