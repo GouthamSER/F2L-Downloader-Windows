@@ -6,8 +6,8 @@ Desktop port of the F2L Downloader Android app (v3.7.0). Same logic, same teal/c
 
 <p align="center">
   <a href="https://ibb.co/Sw2QyGZF"><img src="https://i.ibb.co/Sw2QyGZF/image.png" alt="F2L Downloader for Windows — downloads list"></a>
-  <a href="https://ibb.co/SDw1WX1v"><img src="https://i.ibb.co/ycSsj7WZ/image.png" alt="F2L Downloader for Windows — details view" ></a>
-  <a href="https://ibb.co/wZqVSd5j"><img src="https://i.ibb.co/ycSsj7WZ/image.png" alt="f2lpc3" border="0"></a>
+  <a href="https://ibb.co/ycSsj7WZ"><img src="https://i.ibb.co/ycSsj7WZ/image.png" alt="F2L Downloader for Windows — details view" ></a>
+  <a href="https://ibb.co/ycSsj7WZ"><img src="https://i.ibb.co/ycSsj7WZ/image.png" alt="f2lpc3" border="0"></a>
 </p>
 
 ## Features
