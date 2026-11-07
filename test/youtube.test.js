@@ -6,7 +6,7 @@ const path = require('path');
 const assert = require('assert');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f2lyt-'));
-const fake = path.join(dir, process.platform === 'win32' ? 'fake-yt.cmd' : 'fake-yt');
+const fake = path.join(dir, 'fake-yt');
 const impl = path.join(dir, 'fake-impl.js');
 fs.writeFileSync(impl, `
 const fs = require('fs'); const a = process.argv.slice(2);
@@ -36,8 +36,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('F2LF ' + out);
 })();
 `);
-if (process.platform === 'win32') fs.writeFileSync(fake, `@echo off\r\nset ELECTRON_RUN_AS_NODE=\r\n"${process.execPath}" "${impl}" %*\r\n`);
-else { fs.writeFileSync(fake, `#!/bin/sh\nexec "${process.execPath}" "${impl}" "$@"\n`); fs.chmodSync(fake, 0o755); }
+process.env.F2L_YTDLP_SCRIPT = impl; // youtube.js runs the fake through node: works on Windows and Linux
 process.env.F2L_YTDLP = fake;
 process.env.F2L_FFMPEG = path.join(dir, 'ffmpeg-missing');
 const yt = require('../youtube');

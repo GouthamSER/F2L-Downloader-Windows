@@ -158,9 +158,15 @@ async function getInfo(url, onPct) {
   };
 }
 
+// Test hook: F2L_YTDLP_SCRIPT runs a fake yt-dlp through node (Windows cannot spawn .cmd files directly).
+function launch(bin, args, opts) {
+  const script = process.env.F2L_YTDLP_SCRIPT;
+  return script ? spawn(process.execPath, [script, ...args], opts) : spawn(bin, args, opts);
+}
+
 function collect(bin, args, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const p = spawn(bin, args, { env: env(), windowsHide: true });
+    const p = launch(bin, args, { env: env(), windowsHide: true });
     let stdout = '', stderr = '';
     const t = setTimeout(() => { p.kill(); reject(new Error('Timed out while contacting YouTube. Check your connection and try again.')); }, timeoutMs);
     p.stdout.on('data', d => { stdout += d; });
@@ -205,7 +211,7 @@ async function runOnce(item, { signal, onProgress }) {
     item.url
   ];
   return new Promise((resolve, reject) => {
-    const p = spawn(bin, args, { env: env(), windowsHide: true, cwd: item.folder });
+    const p = launch(bin, args, { env: env(), windowsHide: true, cwd: item.folder });
     let stderr = '', final = null, buf = '', offset = 0, lastDl = 0, lastTotal = 0, post = false;
     const onAbort = () => { try { p.kill(); } catch { /* gone */ } };
     if (signal.aborted) return reject(new Error('aborted'));
