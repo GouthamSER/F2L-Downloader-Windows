@@ -1,6 +1,6 @@
 # F2L Downloader — Windows
 
-Desktop port of the F2L Downloader Android app (v3.6.0). Same logic, native Windows `.exe`.
+Desktop port of the F2L Downloader Android app (v3.7.0). Same logic, same teal/cyan look and logo, native Windows `.exe`.
 
 ## Screenshots
 
@@ -12,6 +12,7 @@ Desktop port of the F2L Downloader Android app (v3.6.0). Same logic, native Wind
 
 ## Features
 
+- **YouTube** (same flow as the Android app): paste a YouTube link in *Add download* and a panel appears — Video (144p → 4K as available) or Audio (MP3 320/192/128 kbps, M4A), with sizes. Uses yt-dlp (auto-fetched on first use, refreshed every 3 days and once more automatically if a download fails) + bundled ffmpeg. Resumable. Single videos only
 - Multi-threaded segmented downloads (1–16 connections) over HTTP Range, auto fallback to a single connection
 - Pause / resume (progress survives app restarts), auto-retry with back-off, stall detection (30 s)
 - Batch import: paste many links, clipboard, `.txt` / `.m3u`, drag & drop

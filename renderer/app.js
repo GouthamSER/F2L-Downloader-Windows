@@ -20,16 +20,19 @@ const STATUS = { QUEUED: 'Queued', DOWNLOADING: 'Downloading', PAUSED: 'Paused',
 const matches = i => tab === 'all' || (tab === 'active' && (i.status === 'DOWNLOADING' || i.status === 'QUEUED' || i.status === 'PAUSED')) ||
   (tab === 'completed' && i.status === 'COMPLETED') || (tab === 'failed' && i.status === 'FAILED');
 
+const ytQLabel = q => { const m = String(q || '').match(/^mp3(?:-(\d+))?$/); return m ? `MP3${m[1] ? ' ' + m[1] + ' kbps' : ''}` : q === 'm4a' ? 'M4A audio' : /^\d+$/.test(q || '') ? q + 'p' : 'Best'; };
+const fmtDur = s => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
+
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
   clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3200);
 }
 
-function sparkSvg(hist, w = 110, h = 34) {
+function sparkSvg(hist, w = 110, h = 34, col = '#14C8D8') {
   if (!hist || hist.length < 2) return '';
   const max = Math.max(...hist, 1), step = w / (hist.length - 1);
   const pts = hist.map((v, i) => `${(i * step).toFixed(1)},${(h - 2 - (Math.max(v, 0) / max) * (h - 4)).toFixed(1)}`);
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline fill="none" stroke="#2F7BFF" stroke-width="2" stroke-linejoin="round" points="${pts.join(' ')}"/></svg>`;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" points="${pts.join(' ')}"/></svg>`;
 }
 
 function actionsFor(i) {
@@ -56,9 +59,10 @@ function renderList() {
     }
     meta.push(`<span>${fmtBytes(i.downloadedBytes)}${i.totalBytes > 0 ? ' / ' + fmtBytes(i.totalBytes) : ''}</span>`);
     if (i.totalBytes > 0 && i.status !== 'COMPLETED') meta.push(`<span>${p.toFixed(1)}%</span>`);
-    if (!i.isTorrent && i.status === 'DOWNLOADING') meta.push(`<span>${i.singleOnly ? 1 : i.connections} conn</span>`);
-    return `<div class="card ${i.status}" data-id="${i.id}">
-      <div style="min-width:0"><div class="name"><span class="badge ${i.status}">${STATUS[i.status] || i.status}</span>${i.isTorrent ? `<span class="badge mag">${i.qbit ? 'qBittorrent' : 'magnet'}</span>` : ''}<span style="overflow:hidden;text-overflow:ellipsis">${esc(i.fileName)}</span></div>
+    if (i.yt) meta.push(`<span>${esc(ytQLabel(i.ytQuality))}</span>${i.ytChannel ? `<span>${esc(i.ytChannel)}</span>` : ''}`);
+    if (!i.isTorrent && !i.yt && i.status === 'DOWNLOADING') meta.push(`<span>${i.singleOnly ? 1 : i.connections} conn</span>`);
+    return `<div class="card ${i.status}${i.yt ? ' yt' : ''}" data-id="${i.id}">
+      <div style="min-width:0"><div class="name"><span class="badge ${i.status}">${STATUS[i.status] || i.status}</span>${i.yt ? '<span class="badge yt">YouTube</span>' : ''}${i.isTorrent ? `<span class="badge mag">${i.qbit ? 'qBittorrent' : 'magnet'}</span>` : ''}<span style="overflow:hidden;text-overflow:ellipsis">${esc(i.fileName)}</span></div>
       <div class="meta">${meta.join('')}</div></div>
       <div class="acts">${i.status === 'DOWNLOADING' ? sparkSvg(i.speedHistory.slice(-30)) : ''}${actionsFor(i)}</div>
       <div class="prog ${ind ? 'ind' : ''}"><div style="width:${p}%"></div></div>
@@ -83,16 +87,16 @@ function drawChart(cv, hist) {
   g.strokeStyle = dark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.08)'; g.lineWidth = 1;
   for (let k = 1; k < 4; k++) { g.beginPath(); g.moveTo(0, h * k / 4); g.lineTo(w, h * k / 4); g.stroke(); }
   const d = hist.map(v => Math.max(v, 0));
-  if (d.length < 2) { g.fillStyle = '#8B93A7'; g.font = '12px sans-serif'; g.fillText('Waiting for data…', 12, 22); return; }
+  if (d.length < 2) { g.fillStyle = '#8FBFC4'; g.font = '12px sans-serif'; g.fillText('Waiting for data…', 12, 22); return; }
   const max = Math.max(...d, 1) * 1.15, step = w / (d.length - 1);
   const y = v => h - 6 - (v / max) * (h - 14);
   g.beginPath(); d.forEach((v, k) => k ? g.lineTo(k * step, y(v)) : g.moveTo(0, y(v)));
   g.lineTo(w, h); g.lineTo(0, h); g.closePath();
-  const grad = g.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, 'rgba(47,123,255,.45)'); grad.addColorStop(1, 'rgba(47,123,255,0)');
+  const grad = g.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, 'rgba(20,200,216,.45)'); grad.addColorStop(1, 'rgba(20,200,216,0)');
   g.fillStyle = grad; g.fill();
   g.beginPath(); d.forEach((v, k) => k ? g.lineTo(k * step, y(v)) : g.moveTo(0, y(v)));
-  g.strokeStyle = '#2F7BFF'; g.lineWidth = 2.5; g.shadowColor = '#2F7BFF'; g.shadowBlur = 8; g.stroke(); g.shadowBlur = 0;
-  g.fillStyle = '#8B93A7'; g.font = '11px sans-serif'; g.fillText('peak ' + fmtSpeed(Math.max(...d)), 8, 14);
+  g.strokeStyle = '#14C8D8'; g.lineWidth = 2.5; g.shadowColor = '#14C8D8'; g.shadowBlur = 8; g.stroke(); g.shadowBlur = 0;
+  g.fillStyle = '#8FBFC4'; g.font = '11px sans-serif'; g.fillText('peak ' + fmtSpeed(Math.max(...d)), 8, 14);
 }
 
 function renderDetail() {
@@ -101,7 +105,7 @@ function renderDetail() {
   const segs = (i.segs || []).map(s => `<div title="${fmtBytes(s.d)} / ${fmtBytes(s.e - s.s + 1)}"><i style="width:${Math.min(100, s.d * 100 / (s.e - s.s + 1))}%"></i></div>`).join('');
   const root = $('#detail');
   const keep = root.querySelector('canvas');
-  root.innerHTML = `<div class="dh"><div style="min-width:0"><h2>${esc(i.fileName)}</h2><span class="badge ${i.status}">${STATUS[i.status]}</span> ${i.isTorrent ? `<span class="badge mag">${i.qbit ? 'qBittorrent' : 'magnet'}</span>` : ''}</div>
+  root.innerHTML = `<div class="dh"><div style="min-width:0"><h2>${esc(i.fileName)}</h2><span class="badge ${i.status}">${STATUS[i.status]}</span> ${i.yt ? '<span class="badge yt">YouTube</span>' : ''} ${i.isTorrent ? `<span class="badge mag">${i.qbit ? 'qBittorrent' : 'magnet'}</span>` : ''}</div>
     <div class="acts">${actionsFor(i)}<button class="ic" data-act="close" title="Close" aria-label="Close">✕</button></div></div>
     <div class="prog ${i.speed === -1 ? 'ind' : ''}" style="margin-top:12px"><div style="width:${pct(i)}%"></div></div>
     <canvas class="chart" id="chart"></canvas>
@@ -110,7 +114,7 @@ function renderDetail() {
       <dt>Speed</dt><dd>${i.status === 'DOWNLOADING' ? fmtSpeed(i.speed) : '—'}</dd>
       <dt>Progress</dt><dd>${fmtBytes(i.downloadedBytes)} / ${fmtBytes(i.totalBytes)} (${pct(i).toFixed(1)}%)</dd>
       <dt>ETA</dt><dd>${i.status === 'DOWNLOADING' ? fmtEta(i.eta) : '—'}</dd>
-      <dt>${i.bt ? 'Peers' : 'Connections'}</dt><dd>${i.bt ? i.connections : i.isTorrent ? '—' : (i.singleOnly ? '1 (server has no range support)' : i.connections)}</dd>
+      <dt>${i.yt ? 'Quality' : i.bt ? 'Peers' : 'Connections'}</dt><dd>${i.yt ? esc(ytQLabel(i.ytQuality)) : i.bt ? i.connections : i.isTorrent ? '—' : (i.singleOnly ? '1 (server has no range support)' : i.connections)}</dd>
       <dt>Saved to</dt><dd>${esc(i.folder)}</dd>
       <dt>URL</dt><dd>${esc(i.url)}</dd>
       ${i.magnetHash ? `<dt>Info hash</dt><dd>${esc(i.magnetHash)}</dd>` : ''}
@@ -168,14 +172,14 @@ $('#btnClear').onclick = () => window.f2l.clearCompleted();
 
 // ----- add dialog -----
 const UA_PRESETS = $('#addUA');
-const urlCount = () => { const n = window.extractCount($('#addUrls').value); $('#addCount').textContent = n ? `${n} link${n > 1 ? 's' : ''} found` : ''; $('#addName').disabled = n > 1; };
+const urlCount = () => { const n = window.extractCount($('#addUrls').value); $('#addCount').textContent = n ? `${n} link${n > 1 ? 's' : ''} found` : ''; $('#addName').disabled = n > 1; ytSync(); };
 window.extractCount = t => new Set((t.match(/(https?:\/\/[^\s<>"'{}|\\^`]+|magnet:[^\s<>"'{}|\\^`]+)/gi) || [])).size;
 async function openAdd(prefill) {
   $('#addUrls').value = prefill || '';
   $('#addName').value = ''; $('#addRef').value = ''; $('#addHdr').value = ''; UA_PRESETS.value = ''; $('#addUACustom').hidden = true;
   $('#addConn').value = settings.connections; $('#addConnV').textContent = settings.connections;
   $('#addFolder').value = settings.folder; $('#addStart').checked = true;
-  urlCount(); $('#dlgAdd').showModal(); $('#addUrls').focus();
+  yt.url = null; urlCount(); $('#dlgAdd').showModal(); $('#addUrls').focus();
 }
 $('#btnAdd').onclick = async () => openAdd((await window.f2l.clipboard()).join('\n'));
 $('#addUrls').addEventListener('input', urlCount);
@@ -256,7 +260,7 @@ function fillSettings() {
   $('#setAuto').checked = settings.autoResume; $('#setNotif').checked = settings.notifications;
   $('#setBt').checked = settings.btEnabled !== false; $('#setQb').checked = !!settings.qbitEnabled; $('#qbBox').hidden = !settings.qbitEnabled;
   for (const [id, k] of [['#setQbUrl', 'qbitUrl'], ['#setQbUser', 'qbitUser'], ['#setQbPass', 'qbitPass']]) if (document.activeElement !== $(id)) $(id).value = settings[k] || '';
-  $('#setTheme').checked = settings.theme === 'light'; $('#setUpd').checked = settings.autoUpdateCheck;
+  $('#setYtQ').value = settings.ytQuality || '1080'; $('#setTheme').checked = settings.theme === 'light'; $('#setUpd').checked = settings.autoUpdateCheck;
   applyTheme();
 }
 async function save(patch) { settings = await window.f2l.setSettings(patch); fillSettings(); }
@@ -280,6 +284,7 @@ $('#btnQbTest').onclick = async () => {
   const r = await window.f2l.qbitTest({ qbitUrl: $('#setQbUrl').value, qbitUser: $('#setQbUser').value, qbitPass: $('#setQbPass').value });
   $('#qbMsg').textContent = r.ok ? `Connected — qBittorrent ${r.version}` : r.error;
 };
+$('#setYtQ').onchange = e => save({ ytQuality: e.target.value });
 $('#setAuto').onchange = e => save({ autoResume: e.target.checked });
 $('#setNotif').onchange = e => save({ notifications: e.target.checked });
 $('#setTheme').onchange = e => save({ theme: e.target.checked ? 'light' : 'dark' });
@@ -295,6 +300,53 @@ async function doUpdate(manual) {
   else if (manual) $('#updMsg').textContent = r.message;
 }
 $('#btnUpdate').onclick = () => doUpdate(true);
+
+// ----- YouTube panel (inside the Add dialog, same flow as the Android app) -----
+const YT_RE = /^https?:\/\/((www|m|music)\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i;
+const yt = { url: null, info: null, mode: 'video', sel: 0, timer: null };
+const ytLinks = () => [...new Set($('#addUrls').value.match(/(https?:\/\/[^\s<>"'{}|\\^`]+|magnet:[^\s<>"'{}|\\^`]+)/gi) || [])];
+const ytSize = b => b > 0 ? '~' + (b >= 1073741824 ? (b / 1073741824).toFixed(2) + ' GB' : Math.round(b / 1048576) + ' MB') : '';
+function ytShow(part) {
+  $('#ytLoading').hidden = part !== 'loading'; $('#ytErr').hidden = part !== 'err'; $('#ytBody').hidden = part !== 'body';
+}
+function ytSync() {
+  const l = ytLinks(), url = l.length === 1 && YT_RE.test(l[0]) ? l[0] : null;
+  $('#ytPanel').hidden = !url; $('#plainFields').hidden = !!url; $('#btnAddOk').hidden = !!url;
+  if (!url) { yt.url = null; clearTimeout(yt.timer); return; }
+  if (url === yt.url) return;
+  yt.url = url; yt.info = null; ytShow('loading');
+  clearTimeout(yt.timer); yt.timer = setTimeout(() => ytLoad(url), 350);
+}
+async function ytLoad(url) {
+  $('#ytLoading').textContent = 'Reading video… first time can take a few seconds'; ytShow('loading');
+  const r = await window.f2l.ytInfo(url);
+  if (yt.url !== url) return; // link changed meanwhile
+  if (!r.ok) { $('#ytErrTxt').textContent = r.error; return ytShow('err'); }
+  yt.info = r.info; yt.mode = 'video'; yt.sel = 0;
+  $('#ytThumb').src = r.info.thumbData || ''; $('#ytThumb').style.visibility = r.info.thumbData ? 'visible' : 'hidden';
+  $('#ytName').textContent = r.info.title;
+  $('#ytSub').textContent = [r.info.channel, r.info.duration ? fmtDur(r.info.duration) : ''].filter(Boolean).join(' • ');
+  ytList(); ytShow('body');
+}
+const ytOpts = () => yt.info ? yt.info.options.filter(o => o.kind === yt.mode) : [];
+function ytList() {
+  document.querySelectorAll('.ytp-tabs .chip').forEach(c => c.classList.toggle('on', c.dataset.m === yt.mode));
+  $('#ytList').innerHTML = ytOpts().map((o, i) => `<label class="ytp-row"><input type="radio" name="ytq" value="${i}" ${i === yt.sel ? 'checked' : ''}><span>${esc(o.label)}</span><small>${ytSize(o.bytes)}</small></label>`).join('');
+  $('#ytGo').textContent = yt.mode === 'audio' ? 'Download audio' : 'Download video';
+}
+$('.ytp-tabs').addEventListener('click', e => { const c = e.target.closest('.chip'); if (!c) return; yt.mode = c.dataset.m; yt.sel = 0; ytList(); });
+$('#ytList').addEventListener('change', e => { yt.sel = +e.target.value; });
+$('#ytRetry').onclick = () => ytLoad(yt.url);
+$('#ytGo').onclick = async () => {
+  const o = ytOpts()[yt.sel]; if (!yt.info || !o) return;
+  $('#ytGo').disabled = true;
+  const r = await window.f2l.ytAdd({ url: yt.info.url, title: yt.info.title, channel: yt.info.channel, quality: o.id, expected: o.bytes, folder: $('#addFolder').value, autoStart: $('#addStart').checked });
+  $('#ytGo').disabled = false;
+  if (r.skipped === 'folder') return toast(r.error);
+  $('#dlgAdd').close();
+  toast(r.added ? 'YouTube download added' : r.skipped === 'duplicate' ? 'Already downloading this video' : r.skipped === 'exists' ? 'You already downloaded this video' : r.skipped === 'resumed' ? 'Resumed earlier download' : 'Could not add this video');
+};
+window.f2l.onYtSetup(p => { if (!$('#ytLoading').hidden) $('#ytLoading').textContent = `Setting up the YouTube engine (first time only)… ${p}%`; });
 
 (async function init() {
   const s = await window.f2l.state();

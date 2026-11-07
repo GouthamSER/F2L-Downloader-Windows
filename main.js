@@ -6,6 +6,7 @@ const fsp = fs.promises;
 const engine = require('./engine');
 const qbit = require('./qbit');
 const bt = require('./torrent');
+const yt = require('./youtube');
 
 const VERSION = require('./package.json').version;
 const REPO = 'GouthamSER/F2L-Downloader-Windows';
@@ -28,6 +29,7 @@ const DEFAULT_SETTINGS = () => ({
   theme: 'dark',
   autoUpdateCheck: true,
   btEnabled: true,
+  ytQuality: '1080',
   qbitEnabled: false,
   qbitUrl: 'http://127.0.0.1:8080',
   qbitUser: 'admin',
@@ -108,7 +110,12 @@ function run(item) {
     try {
       while (true) {
         try {
-          await engine.download(item, { signal: ac.signal, onProgress });
+          if (item.yt) {
+            const fp = await yt.run(item, { signal: ac.signal, onProgress });
+            item.fileName = path.basename(fp); item.folder = path.dirname(fp);
+            const st = await fsp.stat(fp).catch(() => null);
+            if (st) { item.totalBytes = st.size; item.downloadedBytes = st.size; }
+          } else await engine.download(item, { signal: ac.signal, onProgress });
           item.status = 'COMPLETED'; item.speed = 0; item.eta = -1; item.error = null; item.completedAt = Date.now();
           if (item.totalBytes > 0) item.downloadedBytes = item.totalBytes;
           else item.totalBytes = item.downloadedBytes;
@@ -116,7 +123,7 @@ function run(item) {
           return;
         } catch (e) {
           if (ac.signal.aborted) return; // paused / removed: state set by caller
-          if (attempt < maxRetry && engine.isRetryable(e)) {
+          if (attempt < maxRetry && engine.isRetryable(e) && !(e && e.fatal)) {
             attempt++;
             item.error = `Connection problem — retrying (${attempt}/${maxRetry})…`; item.speed = 0; push();
             await sleep(2000 * attempt, ac.signal);
@@ -309,6 +316,7 @@ async function addOne(url, o) {
   const magnet = engine.isMagnet(clean);
   if (!magnet && !/^https?:\/\//i.test(clean)) return { skipped: 'invalid' };
   const folder = o.folder || settings.folder;
+  if (!magnet && yt.isYoutube(clean)) return addYoutubeQuick(clean, o, folder);
   if (magnet && torrentMode()) return addMagnetTorrent(clean, o, folder, torrentMode());
 
   if (!o.force) {
@@ -347,6 +355,79 @@ async function addOne(url, o) {
   return { added: id };
 }
 
+
+// ---------- YouTube ----------
+const ytMsg = e => {
+  if (e && (e.code === 'ENOENT' || e.code === 'EACCES' || e.code === 'EPERM') && e.syscall && /spawn/.test(e.syscall)) {
+    fsp.rm(yt.binPath(), { force: true }).catch(() => {});
+    return 'The YouTube engine was removed or blocked (antivirus?). It will be downloaded again — click Retry.';
+  }
+  return e && e.yt ? e.message : engine.friendly(e);
+};
+
+async function thumbData(url) {
+  try {
+    if (!/^https:\/\//i.test(url || '')) return null;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const type = r.headers.get('content-type') || '';
+    if (!r.ok || !/^image\//.test(type)) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    return buf.length < 3_000_000 ? `data:${type};base64,${buf.toString('base64')}` : null;
+  } catch { return null; }
+}
+
+function pickOption(options, q) {
+  const vids = options.filter(o => o.kind === 'video');
+  if (q === 'mp3') q = 'mp3-320';
+  const exact = options.find(o => o.id === q);
+  if (exact) return exact;
+  if (q === 'best' || !vids.length) return vids[0] || options[0];
+  const h = parseInt(q, 10) || 1080;
+  return vids.find(o => o.height <= h) || vids[vids.length - 1];
+}
+
+async function addYoutube(o) {
+  const url = yt.cleanUrl(o.url);
+  const folder = o.folder || settings.folder;
+  const bad = await checkWritable(folder);
+  if (bad) return { skipped: 'folder', error: bad };
+  const quality = String(o.quality || settings.ytQuality || '1080');
+  const audio = yt.isAudioQ(quality);
+  if (!o.force) {
+    const ex = items.find(i => i.yt && i.url === url && i.ytQuality === quality);
+    if (ex) {
+      if (ex.status === 'DOWNLOADING' || ex.status === 'QUEUED') return { skipped: 'duplicate' };
+      if (ex.status === 'PAUSED' || ex.status === 'FAILED') { startItem(ex.id); return { skipped: 'resumed' }; }
+      if (ex.status === 'COMPLETED' && await fsp.stat(path.join(ex.folder, ex.fileName)).then(() => true, () => false)) return { skipped: 'exists' };
+    }
+  }
+  const id = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  const ext = audio ? yt.audioExt(quality) : 'mp4';
+  const tag = audio || !/^\d+$/.test(quality) ? '' : ` [${quality}p]`; // same naming as the Android app: "Title [1080p].mp4"
+  const fileName = await uniqueName(folder, engine.sanitizeName(`${String(o.title || 'video').replace(/\s+/g, ' ').trim().slice(0, 100)}${tag}.${ext}`), url, id);
+  const item = {
+    id, url, folder, fileName,
+    totalBytes: o.expected > 0 ? o.expected : -1, downloadedBytes: 0,
+    status: o.autoStart === false ? 'PAUSED' : 'QUEUED', speed: 0, eta: -1, error: null,
+    connections: Math.min(Math.max(+settings.connections || 4, 1), 16), userAgent: null, referer: null, customHeaders: null,
+    isTorrent: false, magnetHash: null, yt: true, ytStem: fileName.slice(0, fileName.lastIndexOf('.')), ytQuality: quality,
+    ytExpected: o.expected > 0 ? o.expected : 0, ytTitle: o.title || '', ytChannel: o.channel || '',
+    speedHistory: [], addedAt: Date.now(), segs: null
+  };
+  items.unshift(item); push();
+  if (o.autoStart !== false) pump();
+  return { added: id };
+}
+
+// plain link added from the Add dialog / command line / clipboard: look up title, use default quality
+async function addYoutubeQuick(url, o, folder) {
+  try {
+    const info = await yt.getInfo(url, p => { if (win && !win.isDestroyed()) win.webContents.send('yt-setup', p); });
+    const opt = pickOption(info.options, settings.ytQuality || '1080');
+    return await addYoutube({ url: info.url, title: info.title, channel: info.channel, quality: opt.id, expected: opt.bytes, folder, autoStart: o.autoStart });
+  } catch (e) { return { skipped: 'invalid', error: ytMsg(e) }; }
+}
+
 function startItem(id) {
   const it = find(id); if (!it || runners.has(id) || it.status === 'COMPLETED') return;
   if (it.qbit || it.bt) {
@@ -377,6 +458,7 @@ async function removeItem(id, deleteFiles) {
   items = items.filter(i => i.id !== id);
   const fp = path.join(it.folder, it.fileName);
   await fsp.rm(fp + '.f2l.part', { force: true }).catch(() => {});
+  if (it.yt) await yt.cleanPartials(it.folder, it.ytStem).catch(() => {});
   if (deleteFiles) await fsp.rm(fp, { force: true }).catch(() => {});
   push(); pump();
 }
@@ -385,7 +467,7 @@ async function removeItem(id, deleteFiles) {
 function createWindow() {
   win = new BrowserWindow({
     width: 1100, height: 760, minWidth: 820, minHeight: 560,
-    backgroundColor: settings.theme === 'light' ? '#F5F6F9' : '#0B0D12',
+    backgroundColor: settings.theme === 'light' ? '#F0FAFA' : '#04141C',
     title: 'F2L Downloader', icon: path.join(__dirname, 'assets', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
@@ -501,6 +583,15 @@ function registerIpc() {
     } catch (e) { return { ok: false, error: qbitErr(e) }; }
     finally { settings = prev; qb.reset(); }
   });
+  handle('ytInfo', async url => {
+    try {
+      const info = await yt.getInfo(url, p => { if (win && !win.isDestroyed()) win.webContents.send('yt-setup', p); });
+      info.thumbData = await thumbData(info.thumbnail);
+      return { ok: true, info };
+    } catch (e) { return { ok: false, error: ytMsg(e) }; }
+  });
+  handle('ytAdd', o => addYoutube(o || {}));
+  handle('ytIs', u => yt.isYoutube(u));
   handle('clipboard', () => engine.extractUrls(clipboard.readText() || ''));
   handle('checkUpdate', () => checkUpdate());
   handle('openExternal', u => { if (/^https:\/\//i.test(u)) shell.openExternal(u); });
@@ -530,6 +621,7 @@ app.whenReady().then(() => {
     if (it.bt) { if (it.status === 'DOWNLOADING' || it.status === 'QUEUED') { if (settings.autoResume) btResume.push(it); else it.status = 'PAUSED'; } continue; }
     if (it.status === 'DOWNLOADING' || it.status === 'QUEUED') it.status = settings.autoResume ? 'QUEUED' : 'PAUSED';
   }
+  yt.init(path.join(app.getPath('userData'), 'bin'));
   registerIpc();
   createWindow();
   pump();

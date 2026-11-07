@@ -7,5 +7,7 @@ contextBridge.exposeInMainWorld('f2l', {
   open: call('open'), reveal: call('reveal'), openFolder: call('openFolder'), fileExists: call('fileExists'),
   setSettings: call('setSettings'), pickFolder: call('pickFolder'), importFile: call('importFile'),
   clipboard: call('clipboard'), addTorrents: call('addTorrents'), pickTorrents: call('pickTorrents'), qbitTest: call('qbitTest'), checkUpdate: call('checkUpdate'), openExternal: call('openExternal'),
+  ytInfo: call('ytInfo'), ytAdd: call('ytAdd'), ytIs: call('ytIs'),
+  onYtSetup: (cb) => ipcRenderer.on('yt-setup', (_e, p) => cb(p)),
   onItems: (cb) => ipcRenderer.on('items', (_e, items) => cb(items))
 });

@@ -1,14 +1,14 @@
 {
   "name": "f2l-downloader-desktop",
   "productName": "F2L Downloader",
-  "version": "3.6.0",
-  "description": "F2L Downloader for Windows \u2014 multi-threaded segmented downloads, magnet links, qBittorrent hand-off, batch import.",
+  "version": "3.7.0",
+  "description": "F2L Downloader for Windows — multi-threaded segmented downloads, YouTube videos & audio, magnet links, qBittorrent hand-off, batch import.",
   "main": "main.js",
   "author": "Goutham Josh",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test/engine.test.js && node test/qbit.test.js && node test/torrent.test.js",
+    "test": "node test/engine.test.js && node test/qbit.test.js && node test/torrent.test.js && node test/youtube.test.js",
     "dist": "electron-builder --win nsis portable --x64 --publish never"
   },
   "build": {
@@ -19,6 +19,7 @@
       "preload.js",
       "engine.js",
       "qbit.js",
+      "youtube.js",
       "torrent.js",
       "renderer/**",
       "assets/**",
@@ -26,7 +27,8 @@
     ],
     "npmRebuild": false,
     "asarUnpack": [
-      "**/*.node"
+      "**/*.node",
+      "node_modules/ffmpeg-static/**"
     ],
     "win": {
       "icon": "assets/icon.ico",
@@ -47,7 +49,8 @@
     "publish": null
   },
   "dependencies": {
-    "webtorrent": "2.8.5"
+    "webtorrent": "2.8.5",
+    "ffmpeg-static": "5.2.0"
   },
   "overrides": {
     "uint8-util": "2.2.5"
