@@ -1,8 +1,8 @@
 {
   "name": "f2l-downloader-desktop",
   "productName": "F2L Downloader",
-  "version": "3.7.0",
-  "description": "F2L Downloader for Windows — multi-threaded segmented downloads, YouTube videos & audio, magnet links, qBittorrent hand-off, batch import.",
+  "version": "3.7.1",
+  "description": "F2L Downloader for Windows — resumable single-file downloads, YouTube videos & audio, magnet links, qBittorrent hand-off, batch import.",
   "main": "main.js",
   "author": "Goutham Josh",
   "license": "MIT",

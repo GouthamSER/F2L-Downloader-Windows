@@ -10,13 +10,14 @@ const E = require('../engine');
 
 const DATA = crypto.randomBytes(5 * 1024 * 1024 + 123);
 const HASH = crypto.createHash('sha256').update(DATA).digest('hex');
-let rangeHits = 0;
+let rangeHits = 0, busyLeft = 0;
 
 const server = http.createServer((req, res) => {
   const url = req.url;
   const noRange = url.startsWith('/norange');
   const slow = url.startsWith('/slow');
   if (url.startsWith('/missing')) { res.writeHead(404); return res.end(); }
+  if (url.startsWith('/busy') && busyLeft > 0) { busyLeft--; res.writeHead(429, { 'Retry-After': '1' }); return res.end(); }
   const hdr = { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="my file.bin"' };
   if (!noRange) hdr['Accept-Ranges'] = 'bytes';
   if (req.method === 'HEAD') { res.writeHead(200, { ...hdr, 'Content-Length': DATA.length }); return res.end(); }
@@ -32,6 +33,12 @@ const server = http.createServer((req, res) => {
     }
     return res.end(DATA.subarray(s, e + 1));
   }
+  if (slow) { // full (non-range) response, trickled so we can pause mid-way
+    res.writeHead(200, { ...hdr, 'Content-Length': DATA.length });
+    let p = 0; const iv = setInterval(() => { if (p >= DATA.length) { clearInterval(iv); return res.end(); } res.write(DATA.subarray(p, Math.min(p + 64 * 1024, DATA.length))); p += 64 * 1024; }, 30);
+    req.on('close', () => clearInterval(iv));
+    return;
+  }
   res.writeHead(200, { ...hdr, 'Content-Length': DATA.length });
   res.end(DATA);
 });
@@ -45,11 +52,12 @@ const sha = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('
   const mk = (p, extra = {}) => ({ url: base + p, fileName: 'out.bin', folder: dir, connections: 8, ...extra });
   const noop = () => {};
 
-  // 1. segmented, 8 connections
+  // 1. one connection, straight into final file, no part files
   let it = mk('/file');
   await E.download(it, { signal: new AbortController().signal, onProgress: noop });
-  assert.strictEqual(sha(path.join(dir, 'out.bin')), HASH); assert(rangeHits >= 8, 'used ranges');
-  console.log('ok  segmented 8x, sha matches, range hits =', rangeHits);
+  assert.strictEqual(sha(path.join(dir, 'out.bin')), HASH);
+  assert.deepStrictEqual(fs.readdirSync(dir), ['out.bin'], 'no part files left');
+  console.log('ok  single connection, sha matches, only out.bin in folder');
 
   // 2. server without Range -> single connection
   fs.rmSync(path.join(dir, 'out.bin'));
@@ -65,11 +73,30 @@ const sha = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('
   const p = E.download(it, { signal: ac.signal, onProgress: noop });
   await new Promise(r => setTimeout(r, 300)); ac.abort();
   await p.then(() => assert.fail('should abort'), e => assert(e.name === 'AbortError' || /abort/i.test(e.message), 'abort err: ' + e.message));
-  const partial = it.segs.reduce((a, s) => a + s.d, 0);
+  const partial = fs.statSync(path.join(dir, 'out.bin')).size;
   assert(partial > 0 && partial < DATA.length, 'partial progress kept: ' + partial);
+  assert.deepStrictEqual(fs.readdirSync(dir), ['out.bin'], 'no part files after pause');
   await E.download(it, { signal: new AbortController().signal, onProgress: noop });
   assert.strictEqual(sha(path.join(dir, 'out.bin')), HASH);
-  console.log('ok  pause + resume, kept', partial, 'bytes');
+  assert.deepStrictEqual(fs.readdirSync(dir), ['out.bin'], 'no part files after resume');
+  console.log('ok  pause + resume from final file, kept', partial, 'bytes');
+
+  // 3b. 429 busy server: waits and retries, does not fail
+  fs.rmSync(path.join(dir, 'out.bin'));
+  busyLeft = 2;
+  it = mk('/busy');
+  await E.download(it, { signal: new AbortController().signal, onProgress: noop });
+  assert.strictEqual(sha(path.join(dir, 'out.bin')), HASH); assert.strictEqual(busyLeft, 0);
+  console.log('ok  429 x2 then success');
+
+  // 3c. legacy .f2l.part migration
+  fs.rmSync(path.join(dir, 'out.bin'));
+  fs.writeFileSync(path.join(dir, 'out.bin.f2l.part'), DATA.subarray(0, 1000000));
+  it = mk('/file');
+  await E.download(it, { signal: new AbortController().signal, onProgress: noop });
+  assert.strictEqual(sha(path.join(dir, 'out.bin')), HASH);
+  assert.deepStrictEqual(fs.readdirSync(dir), ['out.bin'], 'legacy part gone');
+  console.log('ok  legacy part resumed + removed');
 
   // 4. HTTP error
   await assert.rejects(E.download(mk('/missing'), { signal: new AbortController().signal, onProgress: noop }), e => e.fatal && /404/.test(e.message));
@@ -81,7 +108,7 @@ const sha = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('
   assert.strictEqual(m.infoHash, 'C12FE1C06BBA254A9DC9F519B335AA7C1367A88A'); assert.strictEqual(m.displayName, 'Test Movie'); assert.strictEqual(m.trackers.length, 1);
   assert.strictEqual(E.parseMagnetUri('magnet:?xt=urn:btih:MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U').infoHash.length, 40);
   assert.deepStrictEqual(E.extractUrls('a https://x.com/a.zip b\nmagnet:?xt=urn:btih:abc ftp://no'), ['https://x.com/a.zip', 'magnet:?xt=urn:btih:abc']);
-  assert.strictEqual(E.sanitizeName('a<b>:c?.txt'), 'a_b__c_.txt'); assert.strictEqual(E.sanitizeName('CON.txt'), '_CON.txt');
+  assert.strictEqual(E.sanitizeName('a<b>:c?.txt'), 'a b c.txt'); assert.strictEqual(E.sanitizeName('File Name : Jailer 2 (2026).mkv'), 'File Name Jailer 2 (2026).mkv'); assert.strictEqual(E.sanitizeName('CON.txt'), '_CON.txt');
   console.log('ok  name/magnet/url helpers');
 
   fs.rmSync(dir, { recursive: true, force: true });

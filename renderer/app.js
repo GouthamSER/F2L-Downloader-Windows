@@ -2,6 +2,7 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let items = [], settings = {}, tab = 'all', detailId = null, delId = null;
+const seen = new Set(), lastStatus = new Map();
 
 const fmtBytes = b => {
   if (b == null || b < 0) return '—';
@@ -60,8 +61,8 @@ function renderList() {
     meta.push(`<span>${fmtBytes(i.downloadedBytes)}${i.totalBytes > 0 ? ' / ' + fmtBytes(i.totalBytes) : ''}</span>`);
     if (i.totalBytes > 0 && i.status !== 'COMPLETED') meta.push(`<span>${p.toFixed(1)}%</span>`);
     if (i.yt) meta.push(`<span>${esc(ytQLabel(i.ytQuality))}</span>${i.ytChannel ? `<span>${esc(i.ytChannel)}</span>` : ''}`);
-    if (!i.isTorrent && !i.yt && i.status === 'DOWNLOADING') meta.push(`<span>${i.singleOnly ? 1 : i.connections} conn</span>`);
-    return `<div class="card ${i.status}${i.yt ? ' yt' : ''}" data-id="${i.id}">
+    const isNew = !seen.has(i.id); seen.add(i.id);
+    return `<div class="card ${i.status}${i.yt ? ' yt' : ''}${isNew ? ' new' : ''}" data-id="${i.id}">
       <div style="min-width:0"><div class="name"><span class="badge ${i.status}">${STATUS[i.status] || i.status}</span>${i.yt ? '<span class="badge yt">YouTube</span>' : ''}${i.isTorrent ? `<span class="badge mag">${i.qbit ? 'qBittorrent' : 'magnet'}</span>` : ''}<span style="overflow:hidden;text-overflow:ellipsis">${esc(i.fileName)}</span></div>
       <div class="meta">${meta.join('')}</div></div>
       <div class="acts">${i.status === 'DOWNLOADING' ? sparkSvg(i.speedHistory.slice(-30)) : ''}${actionsFor(i)}</div>
@@ -74,6 +75,14 @@ function renderList() {
 
   const c = t => items.filter(i => t === 'all' || (t === 'active' ? ['DOWNLOADING', 'QUEUED', 'PAUSED'].includes(i.status) : t === 'completed' ? i.status === 'COMPLETED' : i.status === 'FAILED')).length;
   for (const t of ['all', 'active', 'completed', 'failed']) $('#c-' + t).textContent = c(t);
+  // live summary bar
+  const act = items.filter(x => x.status === 'DOWNLOADING');
+  const live = $('#live');
+  if (act.length) {
+    const sp = act.reduce((a, x) => a + (x.speed > 0 ? x.speed : 0), 0);
+    if (live.hidden || !live.firstChild) live.innerHTML = '<i class="dot"></i><b id="liveN"></b><span id="liveS"></span>';
+    $('#liveN').textContent = act.length + ' downloading'; $('#liveS').textContent = fmtBytes(sp) + '/s'; live.hidden = false;
+  } else live.hidden = true;
   $('#totalSpeed').textContent = fmtBytes(items.reduce((a, i) => a + (i.status === 'DOWNLOADING' && i.speed > 0 ? i.speed : 0), 0)) + '/s';
   if (detailId) renderDetail();
 }
@@ -87,7 +96,7 @@ function drawChart(cv, hist) {
   g.strokeStyle = dark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.08)'; g.lineWidth = 1;
   for (let k = 1; k < 4; k++) { g.beginPath(); g.moveTo(0, h * k / 4); g.lineTo(w, h * k / 4); g.stroke(); }
   const d = hist.map(v => Math.max(v, 0));
-  if (d.length < 2) { g.fillStyle = '#8FBFC4'; g.font = '12px sans-serif'; g.fillText('Waiting for data…', 12, 22); return; }
+  if (d.length < 2) { g.fillStyle = '#8FBFC4'; g.font = '12px Arial, sans-serif'; g.fillText('Waiting for data…', 12, 22); return; }
   const max = Math.max(...d, 1) * 1.15, step = w / (d.length - 1);
   const y = v => h - 6 - (v / max) * (h - 14);
   g.beginPath(); d.forEach((v, k) => k ? g.lineTo(k * step, y(v)) : g.moveTo(0, y(v)));
@@ -96,13 +105,13 @@ function drawChart(cv, hist) {
   g.fillStyle = grad; g.fill();
   g.beginPath(); d.forEach((v, k) => k ? g.lineTo(k * step, y(v)) : g.moveTo(0, y(v)));
   g.strokeStyle = '#14C8D8'; g.lineWidth = 2.5; g.shadowColor = '#14C8D8'; g.shadowBlur = 8; g.stroke(); g.shadowBlur = 0;
-  g.fillStyle = '#8FBFC4'; g.font = '11px sans-serif'; g.fillText('peak ' + fmtSpeed(Math.max(...d)), 8, 14);
+  g.fillStyle = '#8FBFC4'; g.font = '11px Arial, sans-serif'; g.fillText('peak ' + fmtSpeed(Math.max(...d)), 8, 14);
 }
 
 function renderDetail() {
   const i = items.find(x => x.id === detailId);
   if (!i) { $('#dlgDetail').close(); detailId = null; return; }
-  const segs = (i.segs || []).map(s => `<div title="${fmtBytes(s.d)} / ${fmtBytes(s.e - s.s + 1)}"><i style="width:${Math.min(100, s.d * 100 / (s.e - s.s + 1))}%"></i></div>`).join('');
+  const segs = '';
   const root = $('#detail');
   const keep = root.querySelector('canvas');
   root.innerHTML = `<div class="dh"><div style="min-width:0"><h2>${esc(i.fileName)}</h2><span class="badge ${i.status}">${STATUS[i.status]}</span> ${i.yt ? '<span class="badge yt">YouTube</span>' : ''} ${i.isTorrent ? `<span class="badge mag">${i.qbit ? 'qBittorrent' : 'magnet'}</span>` : ''}</div>
@@ -114,7 +123,7 @@ function renderDetail() {
       <dt>Speed</dt><dd>${i.status === 'DOWNLOADING' ? fmtSpeed(i.speed) : '—'}</dd>
       <dt>Progress</dt><dd>${fmtBytes(i.downloadedBytes)} / ${fmtBytes(i.totalBytes)} (${pct(i).toFixed(1)}%)</dd>
       <dt>ETA</dt><dd>${i.status === 'DOWNLOADING' ? fmtEta(i.eta) : '—'}</dd>
-      <dt>${i.yt ? 'Quality' : i.bt ? 'Peers' : 'Connections'}</dt><dd>${i.yt ? esc(ytQLabel(i.ytQuality)) : i.bt ? i.connections : i.isTorrent ? '—' : (i.singleOnly ? '1 (server has no range support)' : i.connections)}</dd>
+      <dt>${i.yt ? 'Quality' : i.bt ? 'Peers' : 'Connections'}</dt><dd>${i.yt ? esc(ytQLabel(i.ytQuality)) : i.bt ? i.connections : i.isTorrent ? '—' : 'Single connection'}</dd>
       <dt>Saved to</dt><dd>${esc(i.folder)}</dd>
       <dt>URL</dt><dd>${esc(i.url)}</dd>
       ${i.magnetHash ? `<dt>Info hash</dt><dd>${esc(i.magnetHash)}</dd>` : ''}
@@ -352,6 +361,19 @@ window.f2l.onYtSetup(p => { if (!$('#ytLoading').hidden) $('#ytLoading').textCon
   const s = await window.f2l.state();
   items = s.items; settings = s.settings; $('#ver').textContent = 'v' + s.version;
   fillSettings(); renderList();
-  window.f2l.onItems(list => { items = list; renderList(); });
+  items.forEach(x => { seen.add(x.id); lastStatus.set(x.id, x.status); });
+  window.f2l.onItems(list => {
+    items = list;
+    // feedback when something finishes / fails
+    for (const x of list) {
+      const prev = lastStatus.get(x.id);
+      if (prev === 'DOWNLOADING' && x.status !== prev) {
+        if (x.status === 'COMPLETED') toast('✓ Done: ' + x.fileName);
+        else if (x.status === 'FAILED') toast('✗ Failed: ' + x.fileName);
+      }
+      lastStatus.set(x.id, x.status);
+    }
+    renderList();
+  });
   if (settings.autoUpdateCheck) setTimeout(() => doUpdate(false), 4000);
 })();

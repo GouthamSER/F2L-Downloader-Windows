@@ -1,6 +1,6 @@
 # F2L Downloader — Windows
 
-Desktop port of the F2L Downloader Android app (v3.7.0). Same logic, same teal/cyan look and logo, native Windows `.exe`.
+Desktop port of the F2L Downloader Android app (v3.7.1). Same logic, same teal/cyan look and logo, native Windows `.exe`.
 
 ## Screenshots
 
@@ -13,8 +13,9 @@ Desktop port of the F2L Downloader Android app (v3.7.0). Same logic, same teal/c
 ## Features
 
 - **YouTube** (same flow as the Android app): paste a YouTube link in *Add download* and a panel appears — Video (144p → 4K as available) or Audio (MP3 320/192/128 kbps, M4A), with sizes. Uses yt-dlp (auto-fetched on first use, refreshed every 3 days and once more automatically if a download fails) + bundled ffmpeg. Resumable. Single videos only
-- Multi-threaded segmented downloads (1–16 connections) over HTTP Range, auto fallback to a single connection
-- Pause / resume (progress survives app restarts), auto-retry with back-off, stall detection (30 s)
+- One connection per file, one file on disk (no `.part` files): writes straight into the final file and resumes by size over HTTP Range
+- Server busy (HTTP 429/503): waits (Retry-After or 2/4/8/16 s) and retries instead of failing
+- Pause / resume (progress survives app restarts), auto-retry with back-off, stall detection (30 s). Removing an unfinished download deletes its partial file
 - Batch import: paste many links, clipboard, `.txt` / `.m3u`, drag & drop
 - Built-in torrent engine (WebTorrent): magnets and `.torrent` files download inside F2L with live peers/speed/ETA, pause/resume, no extra app. Stops seeding when done
 - qBittorrent: magnets and `.torrent` files (drag & drop, file picker, double-click) go to qBittorrent via its Web UI API, with live progress, pause/resume/remove synced. Without Web UI, `.torrent` files open in your default torrent app
@@ -22,7 +23,7 @@ Desktop port of the F2L Downloader Android app (v3.7.0). Same logic, same teal/c
 - Custom User-Agent presets, Referer, arbitrary headers / cookies
 - File name from `Content-Disposition`, Windows-safe names, duplicate-safe naming
 - Queue with simultaneous-download limit, taskbar progress, notifications, light/dark theme
-- Live speed sparkline + detail chart with per-connection progress
+- Alive UI: live "N downloading · speed" bar, pulsing active badge, press feedback, toast when a download finishes or fails, Arial-style font
 
 ## Run / build
 ```

@@ -6,7 +6,7 @@
 [data-theme=light]{--bg:#F0FAFA;--s1:#FFFFFF;--s2:#DDF1F2;--tx:#062027;--tx2:#4B6B70;--line:rgba(0,0,0,.09);--glass:rgba(255,255,255,.7)}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--tx);font:14px/1.4 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden}
+body{background:var(--bg);color:var(--tx);font:14px/1.4 Arial,"Liberation Sans",Helvetica,sans-serif;overflow:hidden}
 .glow{position:fixed;border-radius:50%;filter:blur(110px);opacity:.35;pointer-events:none}
 .g1{width:420px;height:420px;background:#0891B2;top:-160px;left:120px}
 .g3{width:340px;height:340px;background:#3B82F6;top:200px;right:-140px;opacity:.28}
@@ -39,7 +39,7 @@ nav i{font-style:normal;font-size:12px;opacity:.85;background:rgba(255,255,255,.
 .btn.add{padding:11px;font-size:14px}
 .btn:disabled{opacity:.45;cursor:default}
 .btn:focus-visible,nav button:focus-visible,.ic:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
-.card{background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:16px;padding:14px 16px;display:grid;grid-template-columns:1fr auto;gap:8px 14px;cursor:pointer}
+.card{transition:transform .12s ease,border-color .15s,box-shadow .15s;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:16px;padding:14px 16px;display:grid;grid-template-columns:1fr auto;gap:8px 14px;cursor:pointer}
 .card:hover{border-color:rgba(20,200,216,.55)}
 .card .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:8px;align-items:center}
 .card .meta{color:var(--tx2);font-size:12px;display:flex;gap:12px;flex-wrap:wrap;margin-top:3px}
@@ -130,3 +130,15 @@ dialog{max-height:92vh;overflow:auto}
 .ytp .ytp-row input[type=radio]:checked{border-color:var(--acc)}
 .ytp .ytp-row input[type=radio]:checked::after{transform:scale(1)}
 .ytp .ytp-row input[type=radio]:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+/* v3.7.1 alive UI */
+.card:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.card:active{transform:scale(.985)}
+.card.new{animation:pop .28s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes pulse{from{opacity:.55}to{opacity:1}}
+.live{display:flex;align-items:center;gap:10px;margin:0 24px 8px;padding:8px 14px;background:var(--glass);border:1px solid var(--line);border-radius:12px;font-size:13px;animation:pop .25s ease-out}
+.live span{color:var(--tx2)}
+.live .dot{width:8px;height:8px;border-radius:50%;background:var(--acc);animation:pulse .8s ease-in-out infinite alternate}
+#toast{animation:pop .2s ease-out}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}

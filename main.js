@@ -338,7 +338,7 @@ async function addOne(url, o) {
     fileName: requested || (magnet ? await engine.resolveFileName(clean) : engine.guessNameFromUrl(clean)),
     totalBytes: -1, downloadedBytes: 0, status: o.autoStart === false ? 'PAUSED' : 'QUEUED',
     speed: 0, eta: -1, error: null,
-    connections: magnet ? 1 : Math.min(Math.max(+o.connections || settings.connections, 1), 16),
+    connections: 1, // single connection per file (server limits parallel streams per IP)
     userAgent: (o.userAgent || '').trim() || null, referer: (o.referer || '').trim() || null, customHeaders: (o.customHeaders || '').trim() || null,
     isTorrent: magnet, magnetHash: info ? info.infoHash : null, speedHistory: [], addedAt: Date.now(), segs: null
   };
@@ -409,7 +409,7 @@ async function addYoutube(o) {
     id, url, folder, fileName,
     totalBytes: o.expected > 0 ? o.expected : -1, downloadedBytes: 0,
     status: o.autoStart === false ? 'PAUSED' : 'QUEUED', speed: 0, eta: -1, error: null,
-    connections: Math.min(Math.max(+settings.connections || 4, 1), 16), userAgent: null, referer: null, customHeaders: null,
+    connections: 1, userAgent: null, referer: null, customHeaders: null,
     isTorrent: false, magnetHash: null, yt: true, ytStem: fileName.slice(0, fileName.lastIndexOf('.')), ytQuality: quality,
     ytExpected: o.expected > 0 ? o.expected : 0, ytTitle: o.title || '', ytChannel: o.channel || '',
     speedHistory: [], addedAt: Date.now(), segs: null
@@ -450,6 +450,7 @@ async function pauseItem(id) {
 }
 async function removeItem(id, deleteFiles) {
   const it = find(id); if (!it) return;
+  const wasDone = it.status === 'COMPLETED';
   it.status = 'CANCELED';
   if (it.qbit && it.qbitAdded) await qb.remove(it.magnetHash, deleteFiles).catch(() => {});
   if (it.bt) { btTorrents.delete(id); await bt.stop(it.magnetHash, !!deleteFiles).catch(() => {}); }
@@ -457,7 +458,9 @@ async function removeItem(id, deleteFiles) {
   await stop(id);
   items = items.filter(i => i.id !== id);
   const fp = path.join(it.folder, it.fileName);
-  await fsp.rm(fp + '.f2l.part', { force: true }).catch(() => {});
+  await fsp.rm(fp + '.f2l.part', { force: true }).catch(() => {});   // leftover from older versions
+  // the partial download IS the final file now: removing an unfinished item must delete it
+  if (!wasDone && !it.yt && !it.isTorrent && !it.bt && !it.qbit) await fsp.rm(fp, { force: true }).catch(() => {});
   if (it.yt) await yt.cleanPartials(it.folder, it.ytStem).catch(() => {});
   if (deleteFiles) await fsp.rm(fp, { force: true }).catch(() => {});
   push(); pump();

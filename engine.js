@@ -1,8 +1,9 @@
 'use strict';
 /**
  * F2L download engine — Node port of the Android DownloadEngine.kt.
- *  - HTTP(S) segmented downloads (2–16 connections) over Range requests, with single-connection fallback
- *  - resume (segment progress is persisted by the caller via item.segs)
+ *  - HTTP(S) downloads: ONE connection, ONE file (no .part files). Writes straight into the final file
+ *    and resumes from its size with an HTTP Range request.
+ *  - 429 / 503 ("server busy"): waits (Retry-After, else 2s,4s,8s,16s) and retries, never fails the download early
  *  - custom User-Agent / Referer / arbitrary headers & cookies
  *  - file name detection from Content-Disposition
  *  - magnet links: resolve .torrent from public caches, else write a .magnet shortcut
@@ -13,8 +14,19 @@ const path = require('path');
 
 class RangeRefusedError extends Error {}
 class HttpError extends Error {
-  constructor(code) { super(httpErrorMessage(code)); this.code = code; this.fatal = code >= 400 && code < 500 && code !== 408 && code !== 429; }
+  constructor(code, retryAfter) {
+    super(httpErrorMessage(code)); this.code = code;
+    this.fatal = code >= 400 && code < 500 && code !== 408 && code !== 429;
+    const n = parseInt(retryAfter, 10); this.retryAfterMs = n > 0 ? n * 1000 : 0;
+  }
 }
+const isBusy = e => e instanceof HttpError && (e.code === 429 || e.code === 503);
+/** 2s,4s,8s,16s (max 20s) unless the server sent Retry-After. */
+const busyWaitMs = (e, tries) => Math.min(Math.max(e.retryAfterMs || (2000 << Math.min(tries, 3)), 1000), 20000);
+const sleepSignal = (ms, signal) => new Promise((res, rej) => {
+  const t = setTimeout(res, ms);
+  signal.addEventListener('abort', () => { clearTimeout(t); const e = new Error('aborted'); e.name = 'AbortError'; rej(e); }, { once: true });
+});
 
 const STALL_MS = 30000;
 
@@ -66,6 +78,8 @@ function httpErrorMessage(code) {
     case 404: return 'File not found (HTTP 404)';
     case 410: return 'File no longer available (HTTP 410)';
     case 416: return 'Range not satisfiable (file may have changed)';
+    case 429: return 'Server busy (HTTP 429) - too many connections. Wait a moment, then retry.';
+    case 503: return 'Server busy (HTTP 503). Wait a moment, then retry.';
     default: return code >= 500 && code <= 599 ? `Server error (HTTP ${code})` : `HTTP ${code}`;
   }
 }
@@ -98,9 +112,14 @@ function extractUrls(text) {
 }
 
 function sanitizeName(name) {
-  let n = String(name || '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').trim();
+  // illegal Windows chars -> space ("File Name : Movie" must not break file creation), collapse, cap length, keep extension
+  let n = String(name || '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').replace(/\s+(\.[A-Za-z0-9]{1,8})$/, '$1').replace(/[. ]+$/, '').trim();
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(n)) n = '_' + n;
-  return n.slice(0, 200) || `download-${Date.now()}.bin`;
+  const dot = n.lastIndexOf('.');
+  const ext = dot > 0 && n.length - dot <= 9 ? n.slice(dot) : '';
+  let base = ext ? n.slice(0, dot) : n;
+  if (base.length > 120) base = base.slice(0, 120).trim();
+  return (base + ext) || `download-${Date.now()}.bin`;
 }
 
 function guessNameFromUrl(url) {
@@ -121,7 +140,7 @@ function parseContentDisposition(h) {
 }
 
 function buildHeaders(item) {
-  const h = { 'Accept-Encoding': 'identity', 'User-Agent': 'F2LDownloader/3.6.0' };
+  const h = { 'Accept-Encoding': 'identity', 'User-Agent': 'F2LDownloader/3.7.1' };
   if (item.userAgent && item.userAgent.trim()) h['User-Agent'] = item.userAgent.trim();
   if (item.referer && item.referer.trim()) h['Referer'] = item.referer.trim();
   if (item.customHeaders) {
@@ -151,7 +170,7 @@ async function probe(url, headers, signal) {
       const cd = r.headers.get('content-disposition'); if (cd) name = parseContentDisposition(cd);
     }
   } catch (e) { if (signal && signal.aborted) throw e; status = 0; }
-  if (status && status >= 400 && status !== 405 && status !== 501 && status !== 403 && status !== 404) throw new HttpError(status);
+  if (status && status >= 400 && status !== 405 && status !== 501 && status !== 403 && status !== 404) throw new HttpError(status, null);
   if (!(status >= 200 && status < 300) || total <= 0 || !ranges) {
     // Many servers refuse HEAD or omit Accept-Ranges — a 1-byte ranged GET tells the truth.
     try {
@@ -194,7 +213,7 @@ async function resolveFileName(url, item = {}) {
 }
 
 /** Stream a ranged/plain response into `onData(chunk)`; aborts if no bytes arrive for STALL_MS. */
-async function streamBody(url, headers, signal, onData, expectStatus) {
+async function streamBody(url, headers, signal, onData) {
   const rc = new AbortController(); linkSignal(signal, rc);
   let stalled = false, timer;
   const arm = () => { clearTimeout(timer); timer = setTimeout(() => { stalled = true; rc.abort(); }, STALL_MS); };
@@ -202,11 +221,7 @@ async function streamBody(url, headers, signal, onData, expectStatus) {
   try {
     const res = await fetch(url, { headers, signal: rc.signal, redirect: 'follow' });
     arm();
-    if (!res.ok) { try { await res.body?.cancel(); } catch { /* */ } throw new HttpError(res.status); }
-    if (expectStatus && res.status !== expectStatus.status) {
-      try { await res.body?.cancel(); } catch { /* */ }
-      if (expectStatus.refuse) throw new RangeRefusedError(`Server refused range request (HTTP ${res.status})`);
-    }
+    if (!res.ok) { try { await res.body?.cancel(); } catch { /* */ } throw new HttpError(res.status, res.headers.get('retry-after')); }
     const status = res.status;
     const reader = res.body.getReader();
     while (true) {
@@ -233,40 +248,55 @@ async function ensureDir(dir) {
 async function download(item, { signal, onProgress }) {
   await ensureDir(item.folder);
   const finalPath = path.join(item.folder, item.fileName);
-  const partPath = finalPath + '.f2l.part';
 
   if (isMagnet(item.url)) return downloadMagnet(item, finalPath, onProgress, signal);
 
   const headers = buildHeaders(item);
-  const info = await probe(item.url, headers, signal);
+  // server full (429/503)? wait and ask again - do not fail
+  let info, busy = 0;
+  for (;;) {
+    try { info = await probe(item.url, headers, signal); break; }
+    catch (e) {
+      if (!isBusy(e) || signal.aborted || ++busy > 10) throw e;
+      await waitBusy(item, e, busy, onProgress, signal, 0, -1);
+    }
+  }
   if (info.total > 0) item.totalBytes = info.total;
+
+  await migrateLegacyParts(item, finalPath, info.total);
 
   // Already fully downloaded?
   if (info.total > 0) {
     const st = await fsp.stat(finalPath).catch(() => null);
-    if (st && st.size === info.total) { await cleanupParts(partPath); onProgress({ downloaded: info.total, total: info.total, speed: 0 }); return; }
+    if (st && st.size === info.total) { onProgress({ downloaded: info.total, total: info.total, speed: 0 }); return; }
   }
-
-  const want = Math.min(Math.max(item.connections || 8, 1), 16);
-  const canSegment = info.total > 0 && info.ranges && want > 1 && !item.singleOnly;
-  if (canSegment) {
-    try {
-      await segmented(item, info.total, want, headers, partPath, finalPath, signal, onProgress);
-      return;
-    } catch (e) {
-      if (signal.aborted) throw e;
-      const got = (item.segs || []).reduce((a, s) => a + s.d, 0);
-      // Server refuses parallel ranges / barely started → fall back to 1 connection. Real progress → rethrow so retry resumes.
-      if (e instanceof RangeRefusedError || got < info.total / 20) {
-        item.segs = null; item.singleOnly = true;
-        await fsp.rm(partPath, { force: true });
-      } else throw e;
-    }
-  }
-  await single(item, info.total, headers, partPath, finalPath, signal, onProgress);
+  await single(item, info.total, headers, finalPath, signal, onProgress);
 }
 
-async function cleanupParts(partPath) { await fsp.rm(partPath, { force: true }).catch(() => {}); }
+async function waitBusy(item, e, tries, onProgress, signal, pos, total) {
+  const ms = busyWaitMs(e, tries);
+  item.error = `Server busy - retrying in ${Math.ceil(ms / 1000)}s (${tries}/10)...`;
+  onProgress({ downloaded: pos, total, speed: 0 });
+  try { await sleepSignal(ms, signal); } finally { item.error = null; }
+}
+
+/**
+ * Old versions wrote "<name>.f2l.part" (single, contiguous) or a pre-allocated part file (segmented, with holes).
+ * Contiguous partial -> becomes the real file so the download resumes. Segmented / unknown -> deleted.
+ */
+async function migrateLegacyParts(item, finalPath, total) {
+  const part = finalPath + '.f2l.part';
+  const st = await fsp.stat(part).catch(() => null);
+  if (!st) { item.segs = null; return; }
+  const segmented = !!(item.segs || item.segTotal);
+  const hasFinal = !!(await fsp.stat(finalPath).catch(() => null));
+  if (!segmented && !hasFinal && st.size > 0 && (total <= 0 || st.size < total)) {
+    try { await fsp.rename(part, finalPath); } catch { await fsp.rm(part, { force: true }).catch(() => {}); }
+  } else {
+    await fsp.rm(part, { force: true }).catch(() => {});
+  }
+  item.segs = null; item.segTotal = null; item.singleOnly = false;
+}
 
 function makeSpeedReporter(getDownloaded, total, onProgress) {
   let last = getDownloaded(), lastT = process.hrtime.bigint();
@@ -280,82 +310,36 @@ function makeSpeedReporter(getDownloaded, total, onProgress) {
   return () => clearInterval(iv);
 }
 
-async function finalize(partPath, finalPath, total, onProgress, downloaded) {
-  onProgress({ downloaded, total, speed: -1 }); // FINALIZING
-  await fsp.rm(finalPath, { force: true });
-  await fsp.rename(partPath, finalPath);
-  onProgress({ downloaded: total > 0 ? total : downloaded, total: total > 0 ? total : downloaded, speed: 0 });
-}
-
-async function segmented(item, total, count, headers, partPath, finalPath, signal, onProgress) {
-  // (Re)build segment table unless a valid one exists for this exact size/count AND the part file is still there.
-  const partStat = await fsp.stat(partPath).catch(() => null);
-  const valid = Array.isArray(item.segs) && item.segs.length === count && item.segTotal === total && partStat && partStat.size === total;
-  if (!valid) {
-    const chunk = Math.ceil(total / count);
-    item.segs = Array.from({ length: count }, (_, i) => {
-      const s = i * chunk, e = Math.min(total - 1, s + chunk - 1);
-      return { s, e, d: 0 };
-    }).filter(sg => sg.s <= sg.e);
-    item.segTotal = total;
-    const fh0 = await fsp.open(partPath, 'w'); await fh0.truncate(total); await fh0.close();
-  }
-  const segs = item.segs;
-  const fh = await fsp.open(partPath, 'r+');
-  const inner = new AbortController(); linkSignal(signal, inner);
-  const sum = () => segs.reduce((a, s) => a + s.d, 0);
-  const stopReport = makeSpeedReporter(sum, total, onProgress);
-
-  const runSeg = async (seg) => {
-    const len = seg.e - seg.s + 1;
-    if (seg.d >= len) return;
-    let pos = seg.s + seg.d;
-    await streamBody(item.url, { ...headers, Range: `bytes=${pos}-${seg.e}` }, inner.signal, async (chunk) => {
-      let buf = chunk;
-      const remaining = seg.e - pos + 1;
-      if (buf.length > remaining) buf = buf.subarray(0, remaining);
-      if (buf.length) { await fh.write(buf, 0, buf.length, pos); pos += buf.length; seg.d += buf.length; }
-      return pos > seg.e; // stop once this segment is complete
-    }, { status: 206, refuse: true });
-    if (seg.d < len) throw new Error('unexpected end of stream');
-  };
-
-  let firstErr = null;
-  try {
-    await Promise.allSettled(segs.map(sg => runSeg(sg).catch(err => { if (!firstErr) firstErr = err; inner.abort(); throw err; })));
-  } finally {
-    stopReport();
-    await fh.close().catch(() => {});
-  }
-  if (signal.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  if (firstErr) throw firstErr;
-  if (sum() < total) throw new Error('unexpected end of stream');
-  await finalize(partPath, finalPath, total, onProgress, total);
-  item.segs = null;
-}
-
-async function single(item, total, headers, partPath, finalPath, signal, onProgress) {
-  let existing = (await fsp.stat(partPath).catch(() => null))?.size || 0;
-  if (total > 0 && existing > total) existing = 0;
-  if (item.segs) { item.segs = null; existing = 0; }
+async function single(item, total, headers, finalPath, signal, onProgress) {
+  // The download goes straight into the final file and resumes from its size. No temp / part files.
+  let existing = (await fsp.stat(finalPath).catch(() => null))?.size || 0;
+  if (total > 0 && existing > total) existing = 0;   // changed / corrupt file: start over
   const h = { ...headers };
   if (existing > 0) h.Range = `bytes=${existing}-`;
-  let pos = existing, fh = null;
+  let pos = existing, fh = null, busy = 0;
   const stopReport = makeSpeedReporter(() => pos, total, onProgress);
   try {
-    await streamBody(item.url, h, signal, async (chunk, status) => {
-      if (!fh) {
-        if (status !== 206 && existing > 0) { pos = 0; fh = await fsp.open(partPath, 'w'); }   // server ignored Range → restart
-        else fh = await fsp.open(partPath, existing > 0 ? 'r+' : 'w');
+    for (;;) {
+      try {
+        await streamBody(item.url, h, signal, async (chunk, status) => {
+          if (!fh) {
+            if (status !== 206 && existing > 0) { pos = 0; fh = await fsp.open(finalPath, 'w'); }   // server ignored Range -> restart
+            else fh = await fsp.open(finalPath, existing > 0 ? 'r+' : 'w');
+          }
+          await fh.write(chunk, 0, chunk.length, pos); pos += chunk.length;
+        });
+        break;
+      } catch (e) {
+        if (!isBusy(e) || signal.aborted || fh || ++busy > 10) throw e;   // busy only happens before any byte arrives
+        await waitBusy(item, e, busy, onProgress, signal, pos, total);
       }
-      await fh.write(chunk, 0, chunk.length, pos); pos += chunk.length;
-    });
+    }
   } finally { stopReport(); if (fh) await fh.close().catch(() => {}); }
   if (signal.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  const size = (await fsp.stat(partPath).catch(() => null))?.size || 0;
-  if (total > 0 && size < total) throw new Error('unexpected end of stream');
-  if (!fh && size === 0) { await fsp.writeFile(partPath, ''); }
-  await finalize(partPath, finalPath, total, onProgress, size);
+  const size = (await fsp.stat(finalPath).catch(() => null))?.size || 0;
+  if (total > 0 && size < total) throw new Error('unexpected end of stream');   // retry loop resumes from this size
+  if (!fh && size === 0) await fsp.writeFile(finalPath, '');
+  onProgress({ downloaded: total > 0 ? total : size, total: total > 0 ? total : size, speed: 0 });
 }
 
 async function downloadMagnet(item, finalPath, onProgress, signal) {
@@ -371,7 +355,7 @@ async function downloadMagnet(item, finalPath, onProgress, signal) {
     for (const u of caches) {
       try {
         const ac = new AbortController(); linkSignal(signal, ac); const t = setTimeout(() => ac.abort(), 20000);
-        const r = await fetch(u, { headers: { 'User-Agent': 'F2LDownloader/3.6.0' }, signal: ac.signal, redirect: 'follow' });
+        const r = await fetch(u, { headers: { 'User-Agent': 'F2LDownloader/3.7.1' }, signal: ac.signal, redirect: 'follow' });
         if (r.ok) {
           const bytes = Buffer.from(await r.arrayBuffer()); clearTimeout(t);
           if (bytes.length > 50 && bytes[0] === 0x64) { // bencoded dict starts with 'd'
@@ -400,5 +384,5 @@ async function downloadMagnet(item, finalPath, onProgress, signal) {
 module.exports = {
   ensureDir, isMagnet, parseMagnetUri, httpErrorMessage, friendly, isRetryable, extractUrls, sanitizeName,
   guessNameFromUrl, resolveFileName, probe, download, buildHeaders, parseContentDisposition,
-  HttpError, RangeRefusedError
+  HttpError, RangeRefusedError, isBusy
 };
