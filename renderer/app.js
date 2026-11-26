@@ -1,7 +1,7 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-let items = [], settings = {}, tab = 'all', detailId = null, delId = null;
+let items = [], settings = {}, tab = 'all', detailId = null, delId = null, query = '', sortMode = 'newest';
 const seen = new Set(), lastStatus = new Map();
 
 const fmtBytes = b => {
@@ -47,10 +47,12 @@ function actionsFor(i) {
   return a.join('');
 }
 
-function renderList() {
-  const shown = items.filter(matches);
-  const list = $('#list');
-  list.innerHTML = shown.map(i => {
+const SORTS = {
+  newest: (a, b) => (b.addedAt || 0) - (a.addedAt || 0), oldest: (a, b) => (a.addedAt || 0) - (b.addedAt || 0),
+  name: (a, b) => a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base', numeric: true }), size: (a, b) => (b.totalBytes || 0) - (a.totalBytes || 0)
+};
+const searchOk = i => !query || (i.fileName + ' ' + (i.url || '') + ' ' + (i.ytChannel || '')).toLowerCase().includes(query);
+const cardHtml = i => {
     const p = pct(i);
     const ind = (i.status === 'DOWNLOADING' && i.totalBytes <= 0) || i.speed === -1;
     const meta = [];
@@ -69,9 +71,15 @@ function renderList() {
       <div class="prog ${ind ? 'ind' : ''}"><div style="width:${p}%"></div></div>
       ${i.error ? `<div class="err">${esc(i.error)}</div>` : ''}
     </div>`;
-  }).join('');
-  $('#empty').hidden = shown.length > 0;
+};
+function renderList() {
+  const shown = items.filter(i => matches(i) && searchOk(i)).sort(SORTS[sortMode] || SORTS.newest);
+  const list = $('#list');
+  list.innerHTML = shown.map(cardHtml).join('');
+  $('#empty').hidden = shown.length > 0 || tab === 'youtube';
   list.hidden = shown.length === 0;
+  $('#btnRetryAll').hidden = !items.some(i => i.status === 'FAILED');
+  if (!$('#viewYoutube').hidden) renderYtMine();
 
   const c = t => items.filter(i => t === 'all' || (t === 'active' ? ['DOWNLOADING', 'QUEUED', 'PAUSED'].includes(i.status) : t === 'completed' ? i.status === 'COMPLETED' : i.status === 'FAILED')).length;
   for (const t of ['all', 'active', 'completed', 'failed']) $('#c-' + t).textContent = c(t);
@@ -170,29 +178,34 @@ $('#nav').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   tab = b.dataset.tab;
   document.querySelectorAll('#nav button').forEach(x => x.classList.toggle('on', x === b));
-  const st = tab === 'settings';
-  $('#viewList').hidden = st; $('#viewSettings').hidden = !st;
+  const st = tab === 'settings', ytab = tab === 'youtube';
+  $('#viewList').hidden = st || ytab; $('#viewSettings').hidden = !st; $('#viewYoutube').hidden = !ytab;
   $('#title').textContent = { all: 'All downloads', active: 'Active', completed: 'Completed', failed: 'Failed' }[tab] || '';
   if (!st) renderList();
+  if (ytab) $('#ytUrl').focus();
 });
 $('#btnPauseAll').onclick = () => window.f2l.pauseAll();
 $('#btnResumeAll').onclick = () => window.f2l.resumeAll();
 $('#btnClear').onclick = () => window.f2l.clearCompleted();
+$('#btnRetryAll').onclick = () => window.f2l.retryFailed();
+$('#search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); renderList(); });
+$('#sort').addEventListener('change', e => { sortMode = e.target.value; try { localStorage.setItem('f2l_sort', sortMode); } catch { /* ignore */ } renderList(); });
+function gotoTab(t) { const b = document.querySelector(`#nav button[data-tab="${t}"]`); if (b) b.click(); }
 
 // ----- add dialog -----
 const UA_PRESETS = $('#addUA');
-const urlCount = () => { const n = window.extractCount($('#addUrls').value); $('#addCount').textContent = n ? `${n} link${n > 1 ? 's' : ''} found` : ''; $('#addName').disabled = n > 1; ytSync(); };
+const urlCount = () => { const n = window.extractCount($('#addUrls').value); $('#addCount').textContent = n ? `${n} link${n > 1 ? 's' : ''} found` : ''; $('#addName').disabled = n > 1; ytRoute(); };
 window.extractCount = t => new Set((t.match(/(https?:\/\/[^\s<>"'{}|\\^`]+|magnet:[^\s<>"'{}|\\^`]+)/gi) || [])).size;
 async function openAdd(prefill) {
+  const pl = linksIn(prefill || '');
+  if (pl.length === 1 && YT_RE.test(pl[0])) return openYoutube(pl[0]);
   $('#addUrls').value = prefill || '';
   $('#addName').value = ''; $('#addRef').value = ''; $('#addHdr').value = ''; UA_PRESETS.value = ''; $('#addUACustom').hidden = true;
-  $('#addConn').value = settings.connections; $('#addConnV').textContent = settings.connections;
   $('#addFolder').value = settings.folder; $('#addStart').checked = true;
-  yt.url = null; urlCount(); $('#dlgAdd').showModal(); $('#addUrls').focus();
+  urlCount(); $('#dlgAdd').showModal(); $('#addUrls').focus();
 }
 $('#btnAdd').onclick = async () => openAdd((await window.f2l.clipboard()).join('\n'));
 $('#addUrls').addEventListener('input', urlCount);
-$('#addConn').addEventListener('input', e => { $('#addConnV').textContent = e.target.value; });
 UA_PRESETS.addEventListener('change', () => { $('#addUACustom').hidden = UA_PRESETS.value !== '__custom'; });
 $('#btnPaste').onclick = async () => {
   const u = await window.f2l.clipboard();
@@ -228,7 +241,7 @@ $('#formAdd').addEventListener('submit', async e => {
   const ua = UA_PRESETS.value === '__custom' ? $('#addUACustom').value : UA_PRESETS.value;
   $('#dlgAdd').close();
   const res = await window.f2l.add({
-    urls, fileName: $('#addName').value, connections: +$('#addConn').value, folder: $('#addFolder').value,
+    urls, fileName: $('#addName').value, folder: $('#addFolder').value,
     autoStart: $('#addStart').checked, userAgent: ua, referer: $('#addRef').value, customHeaders: $('#addHdr').value
   });
   if (res[0] && res[0].skipped === 'folder') return toast(res[0].error);
@@ -264,7 +277,7 @@ document.addEventListener('drop', async e => {
 function applyTheme() { document.body.dataset.theme = settings.theme === 'light' ? 'light' : 'dark'; }
 function fillSettings() {
   $('#folderPath').textContent = settings.folder;
-  $('#setConn').value = settings.connections; $('#setConnV').textContent = settings.connections;
+  $('#setLimit').value = String(settings.speedLimitKBps || 0);
   $('#setMax').value = settings.maxConcurrent; $('#setRetry').value = settings.retryAttempts;
   $('#setAuto').checked = settings.autoResume; $('#setNotif').checked = settings.notifications;
   $('#setBt').checked = settings.btEnabled !== false; $('#setQb').checked = !!settings.qbitEnabled; $('#qbBox').hidden = !settings.qbitEnabled;
@@ -279,8 +292,7 @@ $('#btnFolder').onclick = async () => {
   if (r && r.path) save({ folder: r.path });
 };
 $('#btnOpenFolder').onclick = () => window.f2l.openFolder();
-$('#setConn').oninput = e => { $('#setConnV').textContent = e.target.value; };
-$('#setConn').onchange = e => save({ connections: +e.target.value });
+$('#setLimit').onchange = e => save({ speedLimitKBps: +e.target.value });
 $('#setMax').onchange = e => save({ maxConcurrent: +e.target.value });
 $('#setRetry').onchange = e => save({ retryAttempts: +e.target.value });
 $('#setBt').onchange = e => save({ btEnabled: e.target.checked });
@@ -310,56 +322,118 @@ async function doUpdate(manual) {
 }
 $('#btnUpdate').onclick = () => doUpdate(true);
 
-// ----- YouTube panel (inside the Add dialog, same flow as the Android app) -----
+// ----- YouTube tab (same flow as the Android app: video / audio picker, playlists, "My YouTube") -----
 const YT_RE = /^https?:\/\/((www|m|music)\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i;
-const yt = { url: null, info: null, mode: 'video', sel: 0, timer: null };
-const ytLinks = () => [...new Set($('#addUrls').value.match(/(https?:\/\/[^\s<>"'{}|\\^`]+|magnet:[^\s<>"'{}|\\^`]+)/gi) || [])];
+const yt = { url: null, info: null, mode: 'video', sel: 0, timer: null, pl: null, picked: new Set(), plQ: 'best' };
+const PL_QUALITIES = [['best', 'Best'], ['1080', '1080p'], ['720', '720p'], ['480', '480p'], ['mp3-320', 'MP3 320'], ['mp3-128', 'MP3 128'], ['m4a', 'M4A']];
+const linksIn = t => [...new Set(String(t).match(/(https?:\/\/[^\s<>"'{}|\\^`]+|magnet:[^\s<>"'{}|\\^`]+)/gi) || [])];
 const ytSize = b => b > 0 ? '~' + (b >= 1073741824 ? (b / 1073741824).toFixed(2) + ' GB' : Math.round(b / 1048576) + ' MB') : '';
+const listParam = u => { try { return new URL(u).searchParams.get('list') || ''; } catch { return ''; } };
+const isPure = u => { try { const x = new URL(u); return !!listParam(u) && (!x.searchParams.get('v') || /^\/playlist/.test(x.pathname)); } catch { return false; } };
+
 function ytShow(part) {
-  $('#ytLoading').hidden = part !== 'loading'; $('#ytErr').hidden = part !== 'err'; $('#ytBody').hidden = part !== 'body';
+  $('#ytLoading').hidden = part !== 'loading'; $('#ytErr').hidden = part !== 'err';
+  $('#ytBody').hidden = part !== 'video'; $('#plBody').hidden = part !== 'playlist';
 }
-function ytSync() {
-  const l = ytLinks(), url = l.length === 1 && YT_RE.test(l[0]) ? l[0] : null;
-  $('#ytPanel').hidden = !url; $('#plainFields').hidden = !!url; $('#btnAddOk').hidden = !!url;
-  if (!url) { yt.url = null; clearTimeout(yt.timer); return; }
-  if (url === yt.url) return;
-  yt.url = url; yt.info = null; ytShow('loading');
-  clearTimeout(yt.timer); yt.timer = setTimeout(() => ytLoad(url), 350);
+// Add dialog / Ctrl+V / drag: a single YouTube link jumps to the YouTube tab, prefilled
+function ytRoute() {
+  const l = linksIn($('#addUrls').value);
+  if (l.length === 1 && YT_RE.test(l[0]) && $('#dlgAdd').open) { $('#dlgAdd').close(); openYoutube(l[0]); }
 }
-async function ytLoad(url) {
-  $('#ytLoading').textContent = 'Reading video… first time can take a few seconds'; ytShow('loading');
+function openYoutube(url) { gotoTab('youtube'); $('#ytUrl').value = url || ''; ytChanged(); }
+
+function ytChanged() {
+  const u = $('#ytUrl').value.trim();
+  $('#ytClear').hidden = !u;
+  clearTimeout(yt.timer);
+  const ok = YT_RE.test(u);
+  const hasList = ok && !!listParam(u);
+  $('#ytPlWrap').hidden = !hasList;
+  if (hasList && u !== yt.url && !yt.keepToggle) $('#ytPlToggle').checked = isPure(u);
+  yt.url = ok ? u : null;
+  if (!ok) { ytShow('none'); return; }
+  ytShow('loading'); $('#ytLoading').textContent = 'Reading…';
+  yt.timer = setTimeout(ytLoad, 350);
+}
+async function ytLoad() {
+  const url = yt.url; if (!url) return;
+  const wantPl = !$('#ytPlWrap').hidden && $('#ytPlToggle').checked;
+  $('#ytLoading').textContent = wantPl ? 'Reading playlist… first time can take a few seconds' : 'Reading video… first time can take a few seconds';
+  ytShow('loading');
+  if (wantPl) {
+    const r = await window.f2l.ytPlaylist(url);
+    if (yt.url !== url) return;
+    if (!r.ok) { $('#ytErrTxt').textContent = r.error; return ytShow('err'); }
+    yt.pl = r.playlist; yt.picked = new Set(r.playlist.entries.map(e => e.id));
+    $('#plName').textContent = r.playlist.title;
+    plRender(); return ytShow('playlist');
+  }
   const r = await window.f2l.ytInfo(url);
-  if (yt.url !== url) return; // link changed meanwhile
+  if (yt.url !== url) return;
   if (!r.ok) { $('#ytErrTxt').textContent = r.error; return ytShow('err'); }
   yt.info = r.info; yt.mode = 'video'; yt.sel = 0;
   $('#ytThumb').src = r.info.thumbData || ''; $('#ytThumb').style.visibility = r.info.thumbData ? 'visible' : 'hidden';
   $('#ytName').textContent = r.info.title;
   $('#ytSub').textContent = [r.info.channel, r.info.duration ? fmtDur(r.info.duration) : ''].filter(Boolean).join(' • ');
-  ytList(); ytShow('body');
+  ytList(); ytShow('video');
 }
 const ytOpts = () => yt.info ? yt.info.options.filter(o => o.kind === yt.mode) : [];
 function ytList() {
-  document.querySelectorAll('.ytp-tabs .chip').forEach(c => c.classList.toggle('on', c.dataset.m === yt.mode));
+  document.querySelectorAll('#ytBody .ytp-tabs .chip').forEach(c => c.classList.toggle('on', c.dataset.m === yt.mode));
   $('#ytList').innerHTML = ytOpts().map((o, i) => `<label class="ytp-row"><input type="radio" name="ytq" value="${i}" ${i === yt.sel ? 'checked' : ''}><span>${esc(o.label)}</span><small>${ytSize(o.bytes)}</small></label>`).join('');
   $('#ytGo').textContent = yt.mode === 'audio' ? 'Download audio' : 'Download video';
 }
-$('.ytp-tabs').addEventListener('click', e => { const c = e.target.closest('.chip'); if (!c) return; yt.mode = c.dataset.m; yt.sel = 0; ytList(); });
+function plRender() {
+  const pl = yt.pl; if (!pl) return;
+  $('#plSub').textContent = `${pl.entries.length}${pl.capped ? '+' : ''} videos${pl.channel ? ' • ' + pl.channel : ''}${pl.capped ? ' (first 200 shown)' : ''}`;
+  $('#plQ').innerHTML = PL_QUALITIES.map(([id, l]) => `<button type="button" class="chip${id === yt.plQ ? ' on' : ''}" data-q="${id}">${l}</button>`).join('');
+  $('#plList').innerHTML = pl.entries.map(e => `<label class="ytp-row"><input type="checkbox" data-id="${esc(e.id)}" ${yt.picked.has(e.id) ? 'checked' : ''}><span>${esc(e.title)}</span><small>${e.duration ? fmtDur(e.duration) : ''}</small></label>`).join('');
+  const n = yt.picked.size; $('#plGo').textContent = n ? `Download ${n} video${n > 1 ? 's' : ''}` : 'Pick videos'; $('#plGo').disabled = !n;
+}
+const doneToast = r => toast(r.added ? 'YouTube download added' : r.skipped === 'duplicate' ? 'Already downloading this video' : r.skipped === 'exists' ? 'You already downloaded this video' : r.skipped === 'resumed' ? 'Resumed earlier download' : 'Could not add this video');
+
+$('#ytUrl').addEventListener('input', () => { yt.keepToggle = false; ytChanged(); });
+$('#ytPlToggle').addEventListener('change', () => { yt.keepToggle = true; if (yt.url) { ytShow('loading'); ytLoad(); } });
+$('#ytPaste').onclick = async () => {
+  const u = (await window.f2l.clipboard()).find(x => YT_RE.test(x));
+  if (!u) return toast('No YouTube link on the clipboard');
+  $('#ytUrl').value = u; yt.keepToggle = false; ytChanged();
+};
+$('#ytClear').onclick = () => { $('#ytUrl').value = ''; yt.keepToggle = false; ytChanged(); $('#ytUrl').focus(); };
+$('#ytBody .ytp-tabs').addEventListener('click', e => { const c = e.target.closest('.chip'); if (!c) return; yt.mode = c.dataset.m; yt.sel = 0; ytList(); });
 $('#ytList').addEventListener('change', e => { yt.sel = +e.target.value; });
-$('#ytRetry').onclick = () => ytLoad(yt.url);
+$('#ytRetry').onclick = () => { ytShow('loading'); ytLoad(); };
+$('#plQ').addEventListener('click', e => { const c = e.target.closest('.chip'); if (!c) return; yt.plQ = c.dataset.q; plRender(); });
+$('#plList').addEventListener('change', e => { const id = e.target.dataset.id; if (!id) return; e.target.checked ? yt.picked.add(id) : yt.picked.delete(id); const n = yt.picked.size; $('#plGo').textContent = n ? `Download ${n} video${n > 1 ? 's' : ''}` : 'Pick videos'; $('#plGo').disabled = !n; });
+$('#plAll').onclick = () => { yt.picked = new Set(yt.pl.entries.map(e => e.id)); plRender(); };
+$('#plNone').onclick = () => { yt.picked.clear(); plRender(); };
 $('#ytGo').onclick = async () => {
   const o = ytOpts()[yt.sel]; if (!yt.info || !o) return;
   $('#ytGo').disabled = true;
-  const r = await window.f2l.ytAdd({ url: yt.info.url, title: yt.info.title, channel: yt.info.channel, quality: o.id, expected: o.bytes, folder: $('#addFolder').value, autoStart: $('#addStart').checked });
+  const r = await window.f2l.ytAdd({ url: yt.info.url, title: yt.info.title, channel: yt.info.channel, quality: o.id, expected: o.bytes, folder: settings.folder, autoStart: true });
   $('#ytGo').disabled = false;
   if (r.skipped === 'folder') return toast(r.error);
-  $('#dlgAdd').close();
-  toast(r.added ? 'YouTube download added' : r.skipped === 'duplicate' ? 'Already downloading this video' : r.skipped === 'exists' ? 'You already downloaded this video' : r.skipped === 'resumed' ? 'Resumed earlier download' : 'Could not add this video');
+  doneToast(r);
 };
+$('#plGo').onclick = async () => {
+  const entries = yt.pl.entries.filter(e => yt.picked.has(e.id)); if (!entries.length) return;
+  $('#plGo').disabled = true;
+  const r = await window.f2l.ytAddMany({ entries, quality: yt.plQ, channel: yt.pl.channel, folder: settings.folder, autoStart: true });
+  $('#plGo').disabled = false;
+  if (r.skipped === 'folder') return toast(r.error);
+  toast(`Queued ${r.added} video${r.added === 1 ? '' : 's'}${r.skipped ? ` (${r.skipped} skipped)` : ''} — ${settings.maxConcurrent} at a time`);
+};
+function renderYtMine() {
+  const mine = items.filter(i => i.yt).sort(SORTS.newest);
+  $('#ytMine').innerHTML = mine.map(cardHtml).join('');
+  $('#ytMineEmpty').hidden = mine.length > 0;
+}
 window.f2l.onYtSetup(p => { if (!$('#ytLoading').hidden) $('#ytLoading').textContent = `Setting up the YouTube engine (first time only)… ${p}%`; });
 
 (async function init() {
   const s = await window.f2l.state();
   items = s.items; settings = s.settings; $('#ver').textContent = 'v' + s.version;
+  try { const sm = localStorage.getItem('f2l_sort'); if (SORTS[sm]) { sortMode = sm; $('#sort').value = sm; } } catch { /* ignore */ }
   fillSettings(); renderList();
   items.forEach(x => { seen.add(x.id); lastStatus.set(x.id, x.status); });
   window.f2l.onItems(list => {

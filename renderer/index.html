@@ -18,6 +18,7 @@
       <button data-tab="active">Active <i id="c-active">0</i></button>
       <button data-tab="completed">Completed <i id="c-completed">0</i></button>
       <button data-tab="failed">Failed <i id="c-failed">0</i></button>
+      <button data-tab="youtube" class="ytnav"><span><svg class="ytlogo" viewBox="0 0 28 20" aria-hidden="true"><rect width="28" height="20" rx="5.5" fill="#FF0033"/><path d="M11 5.6v8.8L18.6 10z" fill="#fff"/></svg>YouTube</span></button>
       <button data-tab="settings">Settings</button>
     </nav>
     <div class="side-foot">
@@ -31,11 +32,13 @@
       <header class="bar">
         <h1 id="title">All downloads</h1>
         <div class="bar-actions">
+          <button class="btn" id="btnRetryAll" hidden>Retry failed</button>
           <button class="btn" id="btnPauseAll">Pause all</button>
           <button class="btn" id="btnResumeAll">Resume all</button>
           <button class="btn" id="btnClear">Clear completed</button>
         </div>
       </header>
+      <div class="tools"><input id="search" class="txt" type="search" placeholder="Search downloads…" aria-label="Search downloads"><select id="sort" class="txt" aria-label="Sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A–Z</option><option value="size">Largest first</option></select></div>
       <div id="live" class="live" hidden></div>
       <div id="list" class="list"></div>
       <div id="empty" class="empty" hidden>
@@ -45,12 +48,36 @@
       </div>
     </section>
 
+    <section id="viewYoutube" hidden>
+      <header class="bar"><h1>YouTube</h1></header>
+      <div class="panel ytpage">
+        <div class="yt-in"><input id="ytUrl" class="txt" placeholder="Paste a YouTube video or playlist link" autocomplete="off"><button class="btn" id="ytPaste">Paste</button><button class="btn" id="ytClear" hidden>Clear</button></div>
+        <label class="chk" id="ytPlWrap" hidden><input type="checkbox" id="ytPlToggle"> This link is a playlist — download the whole playlist</label>
+        <div id="ytLoading" class="muted" hidden></div>
+        <div id="ytErr" class="ytp-err" hidden><span id="ytErrTxt"></span> <button type="button" class="btn sm" id="ytRetry">Retry</button></div>
+        <div id="ytBody" class="ytp" hidden>
+          <div class="yt-head"><img id="ytThumb" alt=""><div class="yt-meta"><h3 id="ytName"></h3><div class="muted" id="ytSub"></div></div></div>
+          <div class="ytp-tabs"><button type="button" class="chip on" data-m="video">Video</button><button type="button" class="chip" data-m="audio">Audio / MP3</button></div>
+          <div id="ytList" class="ytp-list"></div>
+          <button type="button" class="btn primary yt-go" id="ytGo">Download video</button>
+        </div>
+        <div id="plBody" class="ytp" hidden>
+          <div class="yt-head"><div class="yt-meta"><h3 id="plName"></h3><div class="muted" id="plSub"></div></div></div>
+          <div class="ytp-tabs" id="plQ"></div>
+          <div class="pl-tools"><button type="button" class="btn sm" id="plAll">Select all</button><button type="button" class="btn sm" id="plNone">None</button></div>
+          <div id="plList" class="ytp-list pl-list"></div>
+          <button type="button" class="btn primary yt-go" id="plGo">Download</button>
+        </div>
+        <div class="ytsec"><h2>My YouTube downloads</h2><div id="ytMine" class="list"></div><p id="ytMineEmpty" class="muted">Nothing yet.</p></div>
+      </div>
+    </section>
+
     <section id="viewSettings" hidden>
       <header class="bar"><h1>Settings</h1></header>
       <div class="panel settings">
         <label class="row"><span>Download folder<small id="folderPath"></small></span><span class="inline"><button class="btn" id="btnFolder">Change…</button><button class="btn" id="btnOpenFolder">Open</button></span></label>
-        <label class="row" hidden><span>Default connections<small>Segments per file (1–16). More is faster on servers that allow it.</small></span><span class="inline"><input type="range" min="1" max="16" id="setConn"><b id="setConnV">8</b></span></label>
         <label class="row"><span>Simultaneous downloads<small>Extra downloads wait in the queue.</small></span><input type="number" min="1" max="10" id="setMax" class="num"></label>
+        <label class="row"><span>Speed limit<small>Caps total speed per download. Applies live, also to YouTube.</small></span><select id="setLimit" class="num" style="width:150px"><option value="0">Unlimited</option><option value="256">256 KB/s</option><option value="512">512 KB/s</option><option value="1024">1 MB/s</option><option value="2048">2 MB/s</option><option value="5120">5 MB/s</option><option value="10240">10 MB/s</option></select></label>
         <label class="row"><span>Retry attempts<small>Automatic retries when the connection drops.</small></span><input type="number" min="0" max="10" id="setRetry" class="num"></label>
         <label class="row"><span>Resume unfinished downloads on launch</span><input type="checkbox" id="setAuto" class="sw"></label>
         <label class="row"><span>Desktop notifications</span><input type="checkbox" id="setNotif" class="sw"></label>
@@ -86,7 +113,6 @@
     <div id="plainFields">
     <div class="grid2">
       <label>File name <small>(single link only, optional)</small><input id="addName" placeholder="auto-detect"></label>
-      <label hidden>Connections <b id="addConnV">8</b><input type="range" min="1" max="16" id="addConn"></label>
     </div>
     <details>
       <summary>Advanced HTTP options</summary>
@@ -106,17 +132,6 @@
     </details>
     </div>
     <label>Save to<span class="inline"><input id="addFolder" readonly><button type="button" class="btn sm" id="btnAddFolder">Browse…</button></span></label>
-    <div id="ytPanel" class="ytp" hidden>
-      <div class="ytp-title"><svg class="ytlogo" viewBox="0 0 28 20" aria-hidden="true"><rect width="28" height="20" rx="5.5" fill="#FF0033"/><path d="M11 5.6v8.8L18.6 10z" fill="#fff"/></svg><b>YouTube</b></div>
-      <div id="ytLoading" class="muted">Reading video… first time can take a few seconds</div>
-      <div id="ytErr" class="ytp-err" hidden><span id="ytErrTxt"></span> <button type="button" class="btn sm" id="ytRetry">Retry</button></div>
-      <div id="ytBody" hidden>
-        <div class="yt-head"><img id="ytThumb" alt=""><div class="yt-meta"><h3 id="ytName"></h3><div class="muted" id="ytSub"></div></div></div>
-        <div class="ytp-tabs"><button type="button" class="chip on" data-m="video">Video</button><button type="button" class="chip" data-m="audio">Audio / MP3</button></div>
-        <div id="ytList" class="ytp-list"></div>
-        <button type="button" class="btn primary yt-go" id="ytGo">Download video</button>
-      </div>
-    </div>
     <div class="actions">
       <label class="chk"><input type="checkbox" id="addStart" checked> Start now</label>
       <span class="grow"></span>

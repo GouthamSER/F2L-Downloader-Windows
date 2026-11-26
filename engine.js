@@ -140,7 +140,7 @@ function parseContentDisposition(h) {
 }
 
 function buildHeaders(item) {
-  const h = { 'Accept-Encoding': 'identity', 'User-Agent': 'F2LDownloader/3.7.1' };
+  const h = { 'Accept-Encoding': 'identity', 'User-Agent': 'F2LDownloader/3.9.0' };
   if (item.userAgent && item.userAgent.trim()) h['User-Agent'] = item.userAgent.trim();
   if (item.referer && item.referer.trim()) h['Referer'] = item.referer.trim();
   if (item.customHeaders) {
@@ -310,6 +310,21 @@ function makeSpeedReporter(getDownloaded, total, onProgress) {
   return () => clearInterval(iv);
 }
 
+// Global speed limit (KB/s, 0 = unlimited). main.js keeps it in sync with Settings; read live so changes apply mid-download.
+let limitKBps = 0;
+const setLimit = v => { limitKBps = Math.max(0, +v || 0); };
+function makeThrottle() {
+  let t0 = Date.now(), sent = 0;
+  return async (n, signal) => {
+    const lim = limitKBps * 1024;
+    if (lim <= 0) { t0 = Date.now(); sent = 0; return; }
+    sent += n;
+    const wait = Math.round(sent * 1000 / lim) - (Date.now() - t0);
+    if (wait > 15) await sleepSignal(Math.min(wait, 2000), signal);
+    if (Date.now() - t0 > 4000) { t0 = Date.now(); sent = 0; } // short window: limit changes take effect fast
+  };
+}
+
 async function single(item, total, headers, finalPath, signal, onProgress) {
   // The download goes straight into the final file and resumes from its size. No temp / part files.
   let existing = (await fsp.stat(finalPath).catch(() => null))?.size || 0;
@@ -318,6 +333,7 @@ async function single(item, total, headers, finalPath, signal, onProgress) {
   if (existing > 0) h.Range = `bytes=${existing}-`;
   let pos = existing, fh = null, busy = 0;
   const stopReport = makeSpeedReporter(() => pos, total, onProgress);
+  const throttle = makeThrottle();
   try {
     for (;;) {
       try {
@@ -327,6 +343,7 @@ async function single(item, total, headers, finalPath, signal, onProgress) {
             else fh = await fsp.open(finalPath, existing > 0 ? 'r+' : 'w');
           }
           await fh.write(chunk, 0, chunk.length, pos); pos += chunk.length;
+          await throttle(chunk.length, signal);
         });
         break;
       } catch (e) {
@@ -355,7 +372,7 @@ async function downloadMagnet(item, finalPath, onProgress, signal) {
     for (const u of caches) {
       try {
         const ac = new AbortController(); linkSignal(signal, ac); const t = setTimeout(() => ac.abort(), 20000);
-        const r = await fetch(u, { headers: { 'User-Agent': 'F2LDownloader/3.7.1' }, signal: ac.signal, redirect: 'follow' });
+        const r = await fetch(u, { headers: { 'User-Agent': 'F2LDownloader/3.9.0' }, signal: ac.signal, redirect: 'follow' });
         if (r.ok) {
           const bytes = Buffer.from(await r.arrayBuffer()); clearTimeout(t);
           if (bytes.length > 50 && bytes[0] === 0x64) { // bencoded dict starts with 'd'
@@ -382,7 +399,7 @@ async function downloadMagnet(item, finalPath, onProgress, signal) {
 }
 
 module.exports = {
-  ensureDir, isMagnet, parseMagnetUri, httpErrorMessage, friendly, isRetryable, extractUrls, sanitizeName,
+  setLimit, ensureDir, isMagnet, parseMagnetUri, httpErrorMessage, friendly, isRetryable, extractUrls, sanitizeName,
   guessNameFromUrl, resolveFileName, probe, download, buildHeaders, parseContentDisposition,
   HttpError, RangeRefusedError, isBusy
 };

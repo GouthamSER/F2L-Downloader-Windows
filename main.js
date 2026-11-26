@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS = () => ({
   autoUpdateCheck: true,
   btEnabled: true,
   ytQuality: '1080',
+  speedLimitKBps: 0,
   qbitEnabled: false,
   qbitUrl: 'http://127.0.0.1:8080',
   qbitUser: 'admin',
@@ -111,6 +112,7 @@ function run(item) {
       while (true) {
         try {
           if (item.yt) {
+            item.limitKBps = settings.speedLimitKBps || 0;
             const fp = await yt.run(item, { signal: ac.signal, onProgress });
             item.fileName = path.basename(fp); item.folder = path.dirname(fp);
             const st = await fsp.stat(fp).catch(() => null);
@@ -545,8 +547,9 @@ function registerIpc() {
     clean.connections = Math.min(Math.max(+clean.connections || settings.connections, 1), 16);
     clean.retryAttempts = Math.min(Math.max(+(clean.retryAttempts ?? settings.retryAttempts), 0), 10);
     clean.maxConcurrent = Math.min(Math.max(+(clean.maxConcurrent ?? settings.maxConcurrent), 1), 10);
+    if ('speedLimitKBps' in clean) clean.speedLimitKBps = Math.max(0, Math.round(+clean.speedLimitKBps || 0));
     for (const k of ['qbitUrl', 'qbitUser', 'qbitPass']) if (k in clean) clean[k] = String(clean[k] || '').trim();
-    settings = { ...settings, ...clean }; qb.reset(); saveSoon(); pump(); return settings;
+    settings = { ...settings, ...clean }; engine.setLimit(settings.speedLimitKBps); qb.reset(); saveSoon(); pump(); return settings;
   });
   handle('pickFolder', async () => {
     try {
@@ -594,6 +597,26 @@ function registerIpc() {
     } catch (e) { return { ok: false, error: ytMsg(e) }; }
   });
   handle('ytAdd', o => addYoutube(o || {}));
+  handle('ytPlaylist', async url => {
+    try {
+      const pl = await yt.fetchPlaylist(url, p => { if (win && !win.isDestroyed()) win.webContents.send('yt-setup', p); });
+      if (!pl.entries.length) return { ok: false, error: 'This playlist is empty or private.' };
+      return { ok: true, playlist: pl };
+    } catch (e) { return { ok: false, error: ytMsg(e) }; }
+  });
+  // queue many playlist videos at one quality preset; the normal download queue (Simultaneous downloads) paces them
+  handle('ytAddMany', async o => {
+    const folder = o.folder || settings.folder;
+    const bad = await checkWritable(folder);
+    if (bad) return { skipped: 'folder', error: bad };
+    let added = 0, skipped = 0;
+    for (const e of (o.entries || []).slice(0, 200)) {
+      const r = await addYoutube({ url: e.url, title: e.title, channel: o.channel || '', quality: o.quality, expected: 0, folder, autoStart: o.autoStart });
+      if (r.added) added++; else skipped++;
+    }
+    return { added, skipped };
+  });
+  handle('retryFailed', () => { for (const it of items.filter(i => i.status === 'FAILED')) startItem(it.id); });
   handle('ytIs', u => yt.isYoutube(u));
   handle('clipboard', () => engine.extractUrls(clipboard.readText() || ''));
   handle('checkUpdate', () => checkUpdate());
@@ -616,6 +639,7 @@ function addTorrentPaths(argv) {
 app.whenReady().then(() => {
   settings = { ...DEFAULT_SETTINGS(), ...readJson('settings.json', {}) };
   items = readJson('downloads.json', []);
+  engine.setLimit(settings.speedLimitKBps);
   const btResume = [];
   // unfinished work at last shutdown: resume or park
   for (const it of items) {

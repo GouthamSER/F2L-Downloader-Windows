@@ -98,6 +98,20 @@ const sha = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('
   assert.deepStrictEqual(fs.readdirSync(dir), ['out.bin'], 'legacy part gone');
   console.log('ok  legacy part resumed + removed');
 
+  // 3d. speed limit (live): 5 MB at 2048 KB/s must take >= ~2s, unlimited must be much faster
+  fs.rmSync(path.join(dir, 'out.bin'));
+  E.setLimit(2048);
+  let t0 = Date.now();
+  await E.download(mk('/file'), { signal: new AbortController().signal, onProgress: noop });
+  const limited = Date.now() - t0;
+  assert.strictEqual(sha(path.join(dir, 'out.bin')), HASH);
+  assert(limited >= 1800, 'speed limit throttles: ' + limited + 'ms');
+  E.setLimit(0); fs.rmSync(path.join(dir, 'out.bin'));
+  t0 = Date.now();
+  await E.download(mk('/file'), { signal: new AbortController().signal, onProgress: noop });
+  assert(Date.now() - t0 < limited / 2, 'unlimited is faster');
+  console.log('ok  speed limit', limited, 'ms limited vs', Date.now() - t0, 'ms unlimited');
+
   // 4. HTTP error
   await assert.rejects(E.download(mk('/missing'), { signal: new AbortController().signal, onProgress: noop }), e => e.fatal && /404/.test(e.message));
   console.log('ok  404 fatal error');

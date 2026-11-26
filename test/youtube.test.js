@@ -12,6 +12,11 @@ fs.writeFileSync(impl, `
 const fs = require('fs'); const a = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || 'ok';
 if (mode === 'fail') { console.error('ERROR: [youtube] abc: Private video. Sign in if you\\'ve been granted access to this video'); process.exit(1); }
+if (a.includes('--flat-playlist')) {
+  fs.writeFileSync(process.env.FAKE_ARGS_FILE || require('os').tmpdir() + '/f2l-fake-args.json', JSON.stringify(a));
+  console.log(JSON.stringify({ title: 'My List', uploader: 'Chan', entries: [{ id: 'aaaaaaaaaaa', title: 'One', duration: 60 }, { id: 'bbbbbbbbbbb', title: 'Two' }, null, { title: 'no id' }] }));
+  process.exit(0);
+}
 if (a.includes('-J')) {
   const f = (id, h, v, ac, size, ext, extra) => Object.assign({ format_id: id, height: h, vcodec: v, acodec: ac, filesize: size, ext, tbr: size / 1000 }, extra || {});
   console.log(JSON.stringify({ id: 'abc', title: 'My: Test/Video', uploader: 'Chan', duration: 125, thumbnail: 'https://i.ytimg.com/vi/abc/hq.jpg', formats: [
@@ -91,6 +96,17 @@ const yt = require('../youtube');
   setTimeout(() => ac2.abort(), 500);
   await assert.rejects(pr, /aborted/);
   assert.ok(Date.now() - t0 < 8000, 'abort is fast');
+
+  // playlist helpers
+  assert.ok(yt.isPlaylistUrl('https://www.youtube.com/watch?v=abc&list=PL123'));
+  assert.ok(!yt.isPlaylistUrl('https://www.youtube.com/watch?v=abc'));
+  assert.ok(yt.isPurePlaylist('https://www.youtube.com/playlist?list=PL123'));
+  assert.ok(!yt.isPurePlaylist('https://www.youtube.com/watch?v=abc&list=PL123'));
+  const pl = await yt.fetchPlaylist('https://www.youtube.com/watch?v=abc&list=PL123');
+  assert.strictEqual(pl.entries.length, 2); assert.strictEqual(pl.entries[0].url, 'https://www.youtube.com/watch?v=aaaaaaaaaaa'); assert.strictEqual(pl.title, 'My List');
+  const pargs = JSON.parse(fs.readFileSync(require('os').tmpdir() + '/f2l-fake-args.json', 'utf8'));
+  assert.ok(!pargs.includes('--no-playlist') && pargs.includes('--playlist-end'), 'playlist call must not pass --no-playlist: ' + pargs);
+  await assert.rejects(yt.fetchPlaylist('https://www.youtube.com/watch?v=abc'), /no playlist/i);
 
   // friendly + fatal error
   process.env.FAKE_MODE = 'fail';

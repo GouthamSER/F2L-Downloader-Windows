@@ -28,6 +28,11 @@ function ffmpegPath() {
 const YT_RE = /^https?:\/\/((www|m|music)\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i;
 const isYoutube = u => YT_RE.test(String(u || '').trim());
 
+/** URL carries a playlist id (list=...). Pure playlist = /playlist page or list= without v=. */
+function playlistId(u) { try { return new URL(String(u).trim()).searchParams.get('list') || ''; } catch { return ''; } }
+const isPlaylistUrl = u => isYoutube(u) && !!playlistId(u);
+function isPurePlaylist(u) { try { const x = new URL(String(u).trim()); return isPlaylistUrl(u) && (!x.searchParams.get('v') || /^\/playlist/.test(x.pathname)); } catch { return false; } }
+
 /** Reduce a YouTube URL to the single video (drops playlist / radio params). */
 function cleanUrl(u) {
   try {
@@ -79,8 +84,8 @@ function ensure(onPct, force) {
 }
 
 // ---------- spawn ----------
-function baseArgs() {
-  const a = ['--no-playlist', '--no-warnings', '--no-colors', '--newline', '--ignore-config', '--encoding', 'utf-8'];
+function baseArgs(playlist) {
+  const a = [...(playlist ? [] : ['--no-playlist']), '--no-warnings', '--no-colors', '--newline', '--ignore-config', '--encoding', 'utf-8'];
   const ff = ffmpegPath(); if (ff) a.push('--ffmpeg-location', ff);
   if (!process.env.F2L_YTDLP) a.push('--js-runtimes', `node:${process.execPath}`); // YouTube signature solving via Electron's Node
   return a;
@@ -158,6 +163,26 @@ async function getInfo(url, onPct) {
   };
 }
 
+const PL_MAX = 200;
+/** Flat playlist listing (no per-video lookups): [{ id, title, url, duration }] up to PL_MAX. */
+async function fetchPlaylist(url, onPct) {
+  const id = playlistId(url);
+  if (!id) throw new Error('This link has no playlist.');
+  const pl = `https://www.youtube.com/playlist?list=${id}`;
+  const args = [...baseArgs(true), '-J', '--flat-playlist', '--playlist-end', String(PL_MAX), pl];
+  const j = await withUpdate(async () => {
+    const bin = await ensure(onPct);
+    const { stdout, stderr, code } = await collect(bin, args, 120_000);
+    if (code !== 0) throw ytError(stderr, code);
+    try { return JSON.parse(stdout.slice(stdout.indexOf('{'))); } catch { throw new Error('Could not read the playlist from YouTube.'); }
+  });
+  const entries = (j.entries || []).filter(e => e && e.id).map(e => ({
+    id: e.id, title: e.title || e.id, duration: e.duration || 0,
+    url: `https://www.youtube.com/watch?v=${e.id}`
+  }));
+  return { id, title: j.title || 'Playlist', channel: j.uploader || j.channel || '', entries, capped: entries.length >= PL_MAX };
+}
+
 // Test hook: F2L_YTDLP_SCRIPT runs a fake yt-dlp through node (Windows cannot spawn .cmd files directly).
 function launch(bin, args, opts) {
   const script = process.env.F2L_YTDLP_SCRIPT;
@@ -205,6 +230,7 @@ async function runOnce(item, { signal, onProgress }) {
   const bin = await ensure();
   const args = [
     ...baseArgs(), ...formatArgs(item.ytQuality),
+    ...(item.limitKBps > 0 ? ['--limit-rate', `${item.limitKBps}K`] : []),
     '--continue', '--no-overwrites', '--no-mtime', '--concurrent-fragments', String(Math.min(Math.max(item.connections || 4, 1), 16)),
     '--progress', '--progress-template', PROGRESS_TPL, '--print', 'after_move:F2LF %(filepath)s',
     '-o', path.join(item.folder, item.ytStem + '.%(ext)s'),
@@ -251,4 +277,4 @@ async function cleanPartials(folder, stem) {
     .map(n => fs.promises.rm(path.join(folder, n), { force: true }).catch(() => {})));
 }
 
-module.exports = { isAudioQ, audioExt, init, isYoutube, cleanUrl, ensure, getInfo, run, formatArgs, buildOptions, cleanPartials, ytError, binPath, ffmpegPath };
+module.exports = { isPlaylistUrl, isPurePlaylist, playlistId, fetchPlaylist, isAudioQ, audioExt, init, isYoutube, cleanUrl, ensure, getInfo, run, formatArgs, buildOptions, cleanPartials, ytError, binPath, ffmpegPath };

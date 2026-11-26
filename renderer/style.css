@@ -142,3 +142,17 @@ dialog{max-height:92vh;overflow:auto}
 .live .dot{width:8px;height:8px;border-radius:50%;background:var(--acc);animation:pulse .8s ease-in-out infinite alternate}
 #toast{animation:pop .2s ease-out}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* v3.9.0 — YouTube tab, search/sort, playlist */
+.tools{display:flex;gap:10px;padding:0 24px 10px}
+.tools .txt{margin:0}.tools #search{flex:1;min-width:0}.tools #sort{width:150px;flex:none}
+nav button.ytnav span{display:flex;align-items:center;gap:8px}
+.ytlogo{width:20px;height:14px;flex:none}
+.ytpage{display:flex;flex-direction:column;gap:12px;padding:16px 18px;margin:0 24px 24px}
+.yt-in{display:flex;gap:8px}.yt-in .txt{flex:1;min-width:0;margin:0}
+.ytpage .ytp{margin-top:0}
+.pl-tools{display:flex;gap:8px}
+.pl-list{max-height:320px}
+.ytsec h2{font-size:15px;margin:10px 0 8px;color:var(--tx2)}
+.ytsec .list{padding:0;flex:none;overflow:visible}
+.chk{display:flex;gap:8px;align-items:center;color:var(--tx2);font-size:13px}

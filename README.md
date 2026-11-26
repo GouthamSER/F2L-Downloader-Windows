@@ -1,6 +1,6 @@
 # F2L Downloader — Windows
 
-Desktop port of the F2L Downloader Android app (v3.7.1). Same logic, same teal/cyan look and logo, native Windows `.exe`.
+Desktop port of the F2L Downloader Android app (v3.9.0). Same logic, same teal/cyan look and logo, native Windows `.exe`.
 
 ## Screenshots
 
@@ -12,7 +12,10 @@ Desktop port of the F2L Downloader Android app (v3.7.1). Same logic, same teal/c
 
 ## Features
 
-- **YouTube** (same flow as the Android app): paste a YouTube link in *Add download* and a panel appears — Video (144p → 4K as available) or Audio (MP3 320/192/128 kbps, M4A), with sizes. Uses yt-dlp (auto-fetched on first use, refreshed every 3 days and once more automatically if a download fails) + bundled ffmpeg. Resumable. Single videos only
+- **YouTube tab** (same as the Android app): paste a link — or press Ctrl+V / use *Add download* with a YouTube link, it jumps to the tab prefilled. Video (144p → 4K as available) or Audio (MP3 320/192/128 kbps, M4A), with sizes. Uses yt-dlp (auto-fetched on first use, refreshed every 3 days and once more automatically if a download fails) + bundled ffmpeg. Resumable. A *My YouTube downloads* list sits under the picker
+- **YouTube playlists**: a link with a playlist id shows a "download the whole playlist" switch. Pick videos with checkboxes (up to 200), choose one quality preset (Best / 1080p / 720p / 480p / MP3 / M4A) and queue them; the normal *Simultaneous downloads* limit paces them
+- **Speed limit** (Settings): Unlimited, 256 KB/s … 10 MB/s per download, applies live to direct links and YouTube
+- **Search + sort** the list (newest / oldest / name / size), **Retry failed** in one click next to Pause all / Resume all
 - One connection per file, one file on disk (no `.part` files): writes straight into the final file and resumes by size over HTTP Range
 - Server busy (HTTP 429/503): waits (Retry-After or 2/4/8/16 s) and retries instead of failing
 - Pause / resume (progress survives app restarts), auto-retry with back-off, stall detection (30 s). Removing an unfinished download deletes its partial file
